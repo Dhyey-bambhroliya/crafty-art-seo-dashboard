@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.db
+*.sqlite3
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment & IDE
+.env
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local CLI tools
+powershell.cmd
