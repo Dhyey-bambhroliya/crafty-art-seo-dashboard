@@ -12,37 +12,49 @@ SCOPES = [settings.GSC_READONLY_SCOPE]
 
 class GSCService:
     @staticmethod
-    def get_oauth_flow(redirect_uri: Optional[str] = None) -> Optional[Flow]:
-        """Creates standard Google OAuth Flow using backend environment configuration."""
-        if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+    def get_oauth_flow(
+        redirect_uri: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None
+    ) -> Optional[Flow]:
+        """Creates standard Google OAuth Flow using provided or backend configuration."""
+        cid = client_id or settings.GOOGLE_CLIENT_ID
+        csec = client_secret or settings.GOOGLE_CLIENT_SECRET
+        ruri = redirect_uri or settings.GOOGLE_REDIRECT_URI
+
+        if not cid or not csec:
             return None
         
         client_config = {
             "web": {
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "client_id": cid,
+                "client_secret": csec,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [redirect_uri or settings.GOOGLE_REDIRECT_URI]
+                "redirect_uris": [ruri]
             }
         }
         
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri=redirect_uri or settings.GOOGLE_REDIRECT_URI
+            redirect_uri=ruri
         )
         return flow
 
     @staticmethod
-    def generate_authorization_url(redirect_uri: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    def generate_authorization_url(
+        redirect_uri: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """
         Returns (auth_url, state)
         Uses access_type='offline' and prompt='consent' so Google returns a refresh token.
         """
-        flow = GSCService.get_oauth_flow(redirect_uri)
+        flow = GSCService.get_oauth_flow(redirect_uri, client_id=client_id, client_secret=client_secret)
         if not flow:
-            return None, "Google Client ID or Client Secret not configured in environment."
+            return None, "Google Client ID or Client Secret not configured in environment or settings."
         
         auth_url, state = flow.authorization_url(
             access_type="offline",
@@ -52,9 +64,14 @@ class GSCService:
         return auth_url, None
 
     @staticmethod
-    def exchange_code(code: str, redirect_uri: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def exchange_code(
+        code: str,
+        redirect_uri: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Exchanges authorization code for credentials tokens server-side."""
-        flow = GSCService.get_oauth_flow(redirect_uri)
+        flow = GSCService.get_oauth_flow(redirect_uri, client_id=client_id, client_secret=client_secret)
         if not flow:
             return None, "Google OAuth not configured."
         

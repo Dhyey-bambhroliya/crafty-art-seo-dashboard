@@ -2,8 +2,11 @@ import {
   AuthResponse, SetupStatus, User, Category, CategoryPage,
   Alert, AlertSetting, DashboardKPIs, DailyTrendPoint, GSCProperty, SyncRun
 } from '../types';
+const API_ORIGIN = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 
-const BASE_URL = `${import.meta.env.VITE_API_URL}/api`;
+const BASE_URL = API_ORIGIN
+  ? (API_ORIGIN.endsWith('/api') ? API_ORIGIN : `${API_ORIGIN}/api`)
+  : '/api';
 
 class ApiClient {
   private getToken(): string | null {

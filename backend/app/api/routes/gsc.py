@@ -17,33 +17,52 @@ from backend.app.services.demo_data_service import seed_demo_dataset, purge_demo
 from backend.app.models.models import DailyPageMetrics, GSCProperty, SyncRun, User, UserRole
 from backend.app.services.metric_service import get_latest_data_date
 
+from backend.app.services.settings_service import get_system_setting, set_system_setting
+
 router = APIRouter(prefix="/gsc", tags=["Google Search Console"])
 
 @router.get("/config-status", response_model=GSCConfigStatusResponse)
-def get_gsc_config_status(current_user: User = Depends(require_team_leader_or_manager)):
-    """Check if Google OAuth Client ID and Secret are configured."""
-    has_id = bool(settings.GOOGLE_CLIENT_ID and len(settings.GOOGLE_CLIENT_ID.strip()) > 5)
-    has_secret = bool(settings.GOOGLE_CLIENT_SECRET and len(settings.GOOGLE_CLIENT_SECRET.strip()) > 5)
+def get_gsc_config_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_team_leader_or_manager)
+):
+    """Check if Google OAuth Client ID and Secret are configured in database or environment."""
+    client_id = get_system_setting(db, "GOOGLE_CLIENT_ID", settings.GOOGLE_CLIENT_ID)
+    client_secret = get_system_setting(db, "GOOGLE_CLIENT_SECRET", settings.GOOGLE_CLIENT_SECRET)
+    redirect_uri = get_system_setting(db, "GOOGLE_REDIRECT_URI", settings.GOOGLE_REDIRECT_URI)
+
+    has_id = bool(client_id and len(client_id.strip()) > 5)
+    has_secret = bool(client_secret and len(client_secret.strip()) > 5)
     return GSCConfigStatusResponse(
         is_configured=has_id and has_secret,
         client_id_configured=has_id,
         client_secret_configured=has_secret,
-        client_id=settings.GOOGLE_CLIENT_ID if has_id else None,
-        redirect_uri=settings.GOOGLE_REDIRECT_URI
+        client_id=client_id if has_id else None,
+        redirect_uri=redirect_uri
     )
 
 @router.post("/config", response_model=GSCConfigStatusResponse)
 def update_gsc_config(
     payload: GSCConfigUpdateRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_manager)
 ):
-    """Manager only: Save or update Google OAuth Client ID and Secret."""
-    settings.GOOGLE_CLIENT_ID = payload.client_id.strip()
-    settings.GOOGLE_CLIENT_SECRET = payload.client_secret.strip()
-    if payload.redirect_uri:
-        settings.GOOGLE_REDIRECT_URI = payload.redirect_uri.strip()
-        
-    # Also persist to .env file
+    """Manager only: Save or update Google OAuth Client ID and Secret securely into PostgreSQL database."""
+    clean_id = payload.client_id.strip()
+    clean_secret = payload.client_secret.strip()
+    clean_redirect = payload.redirect_uri.strip() if payload.redirect_uri else settings.GOOGLE_REDIRECT_URI
+
+    # 1. Persist to database (permanent across Render restarts and deploys)
+    set_system_setting(db, "GOOGLE_CLIENT_ID", clean_id)
+    set_system_setting(db, "GOOGLE_CLIENT_SECRET", clean_secret)
+    set_system_setting(db, "GOOGLE_REDIRECT_URI", clean_redirect)
+
+    # 2. Update active in-memory settings
+    settings.GOOGLE_CLIENT_ID = clean_id
+    settings.GOOGLE_CLIENT_SECRET = clean_secret
+    settings.GOOGLE_REDIRECT_URI = clean_redirect
+
+    # 3. Best-effort persistence to local .env (for local development convenience)
     try:
         env_path = ".env"
         lines = []
@@ -52,13 +71,13 @@ def update_gsc_config(
                 lines = f.readlines()
         except Exception:
             pass
-            
+
         updated = {
-            "GOOGLE_CLIENT_ID": f'GOOGLE_CLIENT_ID="{settings.GOOGLE_CLIENT_ID}"\n',
-            "GOOGLE_CLIENT_SECRET": f'GOOGLE_CLIENT_SECRET="{settings.GOOGLE_CLIENT_SECRET}"\n',
-            "GOOGLE_REDIRECT_URI": f'GOOGLE_REDIRECT_URI="{settings.GOOGLE_REDIRECT_URI}"\n'
+            "GOOGLE_CLIENT_ID": f'GOOGLE_CLIENT_ID="{clean_id}"\n',
+            "GOOGLE_CLIENT_SECRET": f'GOOGLE_CLIENT_SECRET="{clean_secret}"\n',
+            "GOOGLE_REDIRECT_URI": f'GOOGLE_REDIRECT_URI="{clean_redirect}"\n'
         }
-                
+
         new_lines = []
         for line in lines:
             k = line.split("=")[0].strip()
@@ -68,18 +87,18 @@ def update_gsc_config(
                 new_lines.append(line)
         for k, val in updated.items():
             new_lines.append(val)
-            
+
         with open(env_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
     except Exception:
         pass
-        
+
     return GSCConfigStatusResponse(
         is_configured=True,
         client_id_configured=True,
         client_secret_configured=True,
-        client_id=settings.GOOGLE_CLIENT_ID,
-        redirect_uri=settings.GOOGLE_REDIRECT_URI
+        client_id=clean_id,
+        redirect_uri=clean_redirect
     )
 
 class OAuthCallbackRequest(BaseModel):
@@ -92,14 +111,24 @@ class PropertySelectRequest(BaseModel):
 @router.get("/auth-url", response_model=GSCAuthUrlOut)
 def get_gsc_auth_url(
     redirect_uri: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_manager)
 ):
     """Manager only: Generate Google OAuth 2.0 authorization URL for GSC."""
-    url, err = GSCService.generate_authorization_url(redirect_uri)
+    client_id = get_system_setting(db, "GOOGLE_CLIENT_ID", settings.GOOGLE_CLIENT_ID)
+    client_secret = get_system_setting(db, "GOOGLE_CLIENT_SECRET", settings.GOOGLE_CLIENT_SECRET)
+    configured_redirect = get_system_setting(db, "GOOGLE_REDIRECT_URI", settings.GOOGLE_REDIRECT_URI)
+
+    target_redirect = redirect_uri or configured_redirect
+    url, err = GSCService.generate_authorization_url(
+        redirect_uri=target_redirect,
+        client_id=client_id,
+        client_secret=client_secret
+    )
     if err or not url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=err or "Could not generate authorization URL. Ensure GOOGLE_CLIENT_ID is set in .env."
+            detail=err or "Could not generate authorization URL. Ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are configured."
         )
     return GSCAuthUrlOut(auth_url=url)
 
@@ -110,7 +139,17 @@ def handle_oauth_callback(
     current_user: User = Depends(require_manager)
 ):
     """Manager only: Complete OAuth code exchange on the server and discover properties."""
-    token_data, err = GSCService.exchange_code(payload.code, payload.redirect_uri)
+    client_id = get_system_setting(db, "GOOGLE_CLIENT_ID", settings.GOOGLE_CLIENT_ID)
+    client_secret = get_system_setting(db, "GOOGLE_CLIENT_SECRET", settings.GOOGLE_CLIENT_SECRET)
+    configured_redirect = get_system_setting(db, "GOOGLE_REDIRECT_URI", settings.GOOGLE_REDIRECT_URI)
+
+    target_redirect = payload.redirect_uri or configured_redirect
+    token_data, err = GSCService.exchange_code(
+        code=payload.code,
+        redirect_uri=target_redirect,
+        client_id=client_id,
+        client_secret=client_secret
+    )
     if err or not token_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Failed token exchange.")
 
@@ -118,8 +157,8 @@ def handle_oauth_callback(
     creds = GSCService.get_valid_credentials(
         refresh_token=token_data["refresh_token"],
         access_token=token_data["access_token"],
-        client_id=token_data.get("client_id"),
-        client_secret=token_data.get("client_secret")
+        client_id=token_data.get("client_id") or client_id,
+        client_secret=token_data.get("client_secret") or client_secret
     )
     if not creds:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to initialize credentials.")

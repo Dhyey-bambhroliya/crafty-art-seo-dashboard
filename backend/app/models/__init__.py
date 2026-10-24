@@ -1,6 +1,6 @@
 from backend.app.models.models import (
     User, UserRole, GSCProperty, Category, CategoryPage,
-    DailyPageMetrics, Alert, SyncRun, AlertSetting, utc_now
+    DailyPageMetrics, Alert, SyncRun, AlertSetting, SystemSetting, utc_now
 )
 
 __all__ = [
@@ -13,5 +13,6 @@ __all__ = [
     "Alert",
     "SyncRun",
     "AlertSetting",
+    "SystemSetting",
     "utc_now",
 ]

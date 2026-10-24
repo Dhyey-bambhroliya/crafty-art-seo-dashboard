@@ -14,14 +14,19 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     
+    # CORS & Frontend Origins
+    FRONTEND_URL: Optional[str] = "https://crafty-art-seo-dashboard.vercel.app"
+    ADDITIONAL_CORS_ORIGINS: Optional[str] = None
+    
     # Google OAuth & Search Console
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "http://localhost:5173/gsc-callback"
+    GOOGLE_REDIRECT_URI: str = "https://crafty-art-seo-dashboard.vercel.app/gsc-connection"
     GSC_READONLY_SCOPE: str = "https://www.googleapis.com/auth/webmasters.readonly"
     
     # Sync & Schedule
-    DAILY_SYNC_HOUR: int = 3  # 03:00 AM
+    ENABLE_SCHEDULER: bool = True
+    DAILY_SYNC_HOUR: int = 3  # 03:00 AM UTC
     DEFAULT_GSC_PROPERTY: Optional[str] = None
     
     # Thresholds defaults
@@ -31,7 +36,26 @@ class Settings(BaseSettings):
     DEFAULT_POSITION_DROP_WARNING: float = 3.0
     DEFAULT_MIN_PREVIOUS_CLICKS: int = 5
     DEFAULT_MIN_PREVIOUS_IMPRESSIONS: int = 25
-    
+
+    @property
+    def cors_origins(self) -> List[str]:
+        base_origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "https://crafty-art-seo-dashboard.vercel.app",
+        ]
+        if self.FRONTEND_URL:
+            clean = self.FRONTEND_URL.strip().rstrip("/")
+            if clean and clean not in base_origins:
+                base_origins.append(clean)
+        if self.ADDITIONAL_CORS_ORIGINS:
+            for item in self.ADDITIONAL_CORS_ORIGINS.split(","):
+                clean_item = item.strip().rstrip("/")
+                if clean_item and clean_item not in base_origins:
+                    base_origins.append(clean_item)
+        return base_origins
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

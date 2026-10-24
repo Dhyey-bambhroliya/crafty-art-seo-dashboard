@@ -162,3 +162,10 @@ class AlertSetting(Base):
     min_previous_clicks = Column(Integer, default=5, nullable=False)
     min_previous_impressions = Column(Integer, default=25, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True, index=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
