@@ -27,6 +27,41 @@ def test_cors_origins_configuration():
     assert "http://localhost:5173" in origins
     assert "http://127.0.0.1:5173" in origins
     assert "https://crafty-art-seo-dashboard.vercel.app" in origins
+    assert "https://crafty-art-seo-dashboard-e5q96gbo8-new-journy.vercel.app" in origins
+
+def test_cors_preflight_options_login(client: TestClient):
+    """Verify OPTIONS preflight request succeeds for login from production Vercel origins."""
+    allowed_origins = [
+        "https://crafty-art-seo-dashboard-e5q96gbo8-new-journy.vercel.app",
+        "https://crafty-art-seo-dashboard.vercel.app",
+        "http://localhost:5173",
+        "https://crafty-art-seo-dashboard-anypreview.vercel.app",
+    ]
+    for origin in allowed_origins:
+        res = client.options(
+            "/api/auth/login",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type, authorization",
+            }
+        )
+        assert res.status_code == 200
+        assert res.headers.get("access-control-allow-origin") == origin
+        assert res.headers.get("access-control-allow-credentials") == "true"
+        assert "POST" in res.headers.get("access-control-allow-methods", "")
+
+    # Unauthorized domain must be rejected
+    rejected_res = client.options(
+        "/api/auth/login",
+        headers={
+            "Origin": "https://unauthorized-attacker.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        }
+    )
+    assert rejected_res.status_code == 400
+    assert "Disallowed CORS origin" in rejected_res.text
 
 def test_health_endpoints(client: TestClient):
     """Verify health check responds on both /health and /api/health."""

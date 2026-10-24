@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # CORS & Frontend Origins
     FRONTEND_URL: Optional[str] = "https://crafty-art-seo-dashboard.vercel.app"
     ADDITIONAL_CORS_ORIGINS: Optional[str] = None
+    CORS_ORIGIN_REGEX: Optional[str] = r"^https:\/\/.*\.vercel\.app$"
     
     # Google OAuth & Search Console
     GOOGLE_CLIENT_ID: Optional[str] = None
@@ -44,11 +45,13 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173",
             "http://localhost:3000",
             "https://crafty-art-seo-dashboard.vercel.app",
+            "https://crafty-art-seo-dashboard-e5q96gbo8-new-journy.vercel.app",
         ]
         if self.FRONTEND_URL:
-            clean = self.FRONTEND_URL.strip().rstrip("/")
-            if clean and clean not in base_origins:
-                base_origins.append(clean)
+            for item in self.FRONTEND_URL.split(","):
+                clean = item.strip().rstrip("/")
+                if clean and clean not in base_origins:
+                    base_origins.append(clean)
         if self.ADDITIONAL_CORS_ORIGINS:
             for item in self.ADDITIONAL_CORS_ORIGINS.split(","):
                 clean_item = item.strip().rstrip("/")
