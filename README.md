@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Crafty Art SEO Management Dashboard
 
 A production-oriented SEO management and monitoring web application designed specifically for **Crafty Art**. It aggregates page-level Google Search Console (GSC) metrics, provides **28-day vs previous 28-day comparison reporting**, enables category and landing page ownership isolation between Managers and Team Leaders, and features an automated **SEO Anomaly & Traffic Decline Alert Engine**.
@@ -151,3 +152,7 @@ Test coverage includes:
    - Set Authorized Redirect URI: `https://your-domain.com/gsc-connection`.
    - Update `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`.
 4. **Scheduler**: The background sync runs via APScheduler daily at 03:00 UTC. Ensure worker or container process persists.
+=======
+# crafty-art-seo-dashboard
+invitation category traffice maker
+>>>>>>> b1e2cd1b609f80e1a3ce9440f28e9666a9fbab4d
