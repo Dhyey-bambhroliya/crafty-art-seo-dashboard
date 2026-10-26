@@ -178,9 +178,13 @@ export const GSCConnectionPage: React.FC = () => {
     setSyncingId(propertyId);
     setNotice(null);
     try {
-      await api.triggerSync(propertyId);
-      setNotice({ type: 'success', text: 'Synchronization completed successfully!' });
-      loadProperties();
+      const res = await api.triggerSync(propertyId);
+      setNotice({ 
+        type: 'success', 
+        text: res.message || 'Synchronization started in background. Your Search Console metrics are now being ingested.' 
+      });
+      setTimeout(loadProperties, 4000);
+      setTimeout(loadProperties, 10000);
     } catch (err: any) {
       setNotice({ type: 'error', text: `Sync failed: ${err.message}` });
     } finally {

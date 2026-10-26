@@ -275,30 +275,42 @@ def add_property_manually(
         created_at=prop.created_at
     )
 
+def _run_sync_task(property_id: int, triggered_by: str):
+    from backend.app.core.database import SessionLocal
+    with SessionLocal() as db:
+        try:
+            execute_synchronization(
+                db=db,
+                property_id=property_id,
+                triggered_by=triggered_by
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("crafty_art_sync").error(f"Background sync error for property {property_id}: {e}")
+
 @router.post("/properties/{property_id}/sync")
 def trigger_property_sync(
     property_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager)
 ):
-    """Manager only: Trigger immediate manual background synchronization."""
+    """Manager only: Trigger immediate background synchronization."""
     prop = db.query(GSCProperty).filter(GSCProperty.id == property_id).first()
     if not prop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found.")
 
-    try:
-        result = execute_synchronization(
-            db=db,
-            property_id=prop.id,
-            triggered_by=f"USER:{current_user.id}:{current_user.full_name}"
-        )
-        return {
-            "status": "success",
-            "message": "Synchronization completed successfully.",
-            "data": result
-        }
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Sync failed: {str(e)}")
+    background_tasks.add_task(
+        _run_sync_task,
+        property_id=prop.id,
+        triggered_by=f"USER:{current_user.id}:{current_user.full_name}"
+    )
+
+    return {
+        "status": "RUNNING",
+        "message": f"Synchronization for '{prop.site_url}' started in background.",
+        "property_id": prop.id
+    }
 
 @router.get("/sync-runs", response_model=List[SyncRunOut])
 def list_sync_history(

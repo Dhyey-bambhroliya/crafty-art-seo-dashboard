@@ -46,14 +46,14 @@ export const Header: React.FC<HeaderProps> = ({
         setSyncMessage('No property connected. Please connect a Search Console property.');
         return;
       }
-      await api.triggerSync(activeProperty.id);
-      setSyncMessage('Sync completed successfully!');
+      const res = await api.triggerSync(activeProperty.id);
+      setSyncMessage(res.message || 'Sync started in background!');
       if (onSyncCompleted) onSyncCompleted();
     } catch (err: any) {
       setSyncMessage(`Sync error: ${err.message}`);
     } finally {
       setSyncing(false);
-      setTimeout(() => setSyncMessage(null), 4000);
+      setTimeout(() => setSyncMessage(null), 5000);
     }
   };
 
