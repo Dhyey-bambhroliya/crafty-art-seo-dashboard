@@ -23,10 +23,28 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized successfully.")
     
+    # Ensure authorized Team Leaders exist with password '12345678'
+    try:
+        from backend.app.core.database import SessionLocal
+        from backend.app.services.user_service import seed_team_leaders
+        with SessionLocal() as db:
+            seeded = seed_team_leaders(db)
+            logger.info(f"Team Leaders verified and initialized ({seeded} active).")
+    except Exception as e:
+        logger.warning(f"Could not verify/seed team leaders: {str(e)}")
+
     try:
         start_scheduler()
     except Exception as e:
         logger.warning(f"Could not start background scheduler: {str(e)}")
+
+    # Automatically check and trigger overdue daily sync on boot in a background thread
+    try:
+        import threading
+        from backend.app.core.scheduler import check_and_run_due_syncs
+        threading.Thread(target=check_and_run_due_syncs, kwargs={"force": False}, daemon=True).start()
+    except Exception as e:
+        logger.warning(f"Could not launch startup sync check: {str(e)}")
         
     yield
     

@@ -147,3 +147,26 @@ def test_auth_and_gsc_config_flow(client: TestClient):
     assert auth_url_res.status_code == 200
     assert "accounts.google.com" in auth_url_res.json()["auth_url"]
     assert "123456789-abc.apps.googleusercontent.com" in auth_url_res.json()["auth_url"]
+
+def test_team_leaders_seeding_and_login(client: TestClient, db_session):
+    """Verify all 6 authorized Team Leaders are seeded and can login with password '12345678'."""
+    from backend.app.services.user_service import seed_team_leaders, INITIAL_TEAM_LEADERS
+    seed_team_leaders(db_session)
+
+    for leader in INITIAL_TEAM_LEADERS:
+        email = leader["email"]
+        login_res = client.post("/api/auth/login", json={
+            "email": email,
+            "password": "12345678"
+        })
+        assert login_res.status_code == 200, f"Failed login for {email}: {login_res.text}"
+        data = login_res.json()
+        assert data["role"] == "TEAM_LEADER"
+        assert data["email"] == email.lower()
+        assert data["access_token"]
+
+def test_cron_sync_endpoint(client: TestClient):
+    """Verify automated webhook cron-sync endpoint triggers successfully."""
+    res = client.get("/api/gsc/cron-sync")
+    assert res.status_code == 200
+    assert res.json()["status"] == "triggered"

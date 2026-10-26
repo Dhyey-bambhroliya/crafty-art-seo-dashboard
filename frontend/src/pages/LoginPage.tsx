@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Sparkles, Lock, Mail, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Sparkles, Lock, Mail, ArrowRight, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
@@ -35,16 +35,6 @@ export const LoginPage: React.FC = () => {
       setError(err.message || 'Invalid credentials.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fillQuickDemo = (role: 'manager' | 'leader') => {
-    if (role === 'manager') {
-      setEmail('manager@craftyart.com');
-      setPassword('Manager@2026');
-    } else {
-      setEmail('priya.sharma@craftyartapp.com');
-      setPassword('TeamLeader@2026');
     }
   };
 
@@ -119,30 +109,6 @@ export const LoginPage: React.FC = () => {
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-
-          {/* Quick Demo Credentials Assistant */}
-          <div className="mt-6 pt-5 border-t border-slate-800/80">
-            <p className="text-xs font-medium text-slate-400 mb-2.5 flex items-center space-x-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Quick Login Options for Testing:</span>
-            </p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => fillQuickDemo('manager')}
-                className="py-1.5 px-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700/60 font-medium text-left truncate transition-colors"
-              >
-                Manager Demo
-              </button>
-              <button
-                type="button"
-                onClick={() => fillQuickDemo('leader')}
-                className="py-1.5 px-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700/60 font-medium text-left truncate transition-colors"
-              >
-                Team Leader Demo
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

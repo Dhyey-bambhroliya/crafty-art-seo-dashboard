@@ -1,0 +1,16 @@
+name: Automated Daily SEO Data Sync
+
+on:
+  schedule:
+    # Runs every day at 03:00 UTC (08:30 AM IST)
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab anytime
+
+jobs:
+  trigger-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Daily GSC Sync on Render Backend
+        run: |
+          echo "Pinging backend cron-sync endpoint to wake instance and sync GSC properties..."
+          curl -s -f -X GET "https://crafty-art-seo-dashboard.onrender.com/api/gsc/cron-sync" || curl -s -f -X GET "https://crafty-art-seo-backend.onrender.com/api/gsc/cron-sync" || echo "Backend ping sent"

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -399,4 +399,21 @@ def delete_gsc_property(
     db.commit()
 
     return {"message": f"Search Console property '{site_url}' and its metrics deleted successfully."}
+
+@router.api_route("/cron-sync", methods=["GET", "POST"])
+def trigger_automated_cron_sync(
+    background_tasks: BackgroundTasks,
+    force: bool = Query(False)
+):
+    """
+    Automated webhook / cron endpoint for daily synchronization.
+    Callable by external free cron schedulers (e.g. GitHub Actions, cron-job.org, UptimeRobot)
+    or internal systems to keep Google Search Console data fresh every day without manual clicks.
+    """
+    from backend.app.core.scheduler import check_and_run_due_syncs
+    background_tasks.add_task(check_and_run_due_syncs, force=force)
+    return {
+        "status": "triggered",
+        "message": "Automated synchronization job started in the background."
+    }
 
