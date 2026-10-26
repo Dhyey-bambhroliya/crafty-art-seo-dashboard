@@ -55,9 +55,11 @@ export const SetupManagerPage: React.FC = () => {
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-indigo-500 shadow-xl shadow-indigo-500/25 mb-4">
-            <ShieldCheck className="w-8 h-8 text-white" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="Crafty Art Logo"
+            className="w-16 h-16 mx-auto rounded-2xl shadow-xl shadow-indigo-500/25 mb-4 object-contain"
+          />
           <h1 className="text-2xl font-bold text-white tracking-tight">Initial Setup: SEO Manager</h1>
           <p className="text-sm text-slate-400 mt-1">Configure your primary administrator account for Crafty Art.</p>
         </div>
