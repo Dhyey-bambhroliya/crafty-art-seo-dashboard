@@ -53,22 +53,32 @@ export const GSCConnectionPage: React.FC = () => {
     }
   };
 
+  const exchangedCodeRef = React.useRef<string | null>(null);
+
   // Handle OAuth code return from Google if redirected back here
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const code = params.get('code');
     if (code && isManager) {
+      if (exchangedCodeRef.current === code) return;
+      exchangedCodeRef.current = code;
+
+      // Clean dead code from browser address bar immediately so refresh won't replay it
+      window.history.replaceState({}, document.title, window.location.pathname);
+
       setConnecting(true);
       const redirectUri = window.location.origin + '/gsc-connection';
       api.exchangeGscCode(code, redirectUri)
         .then((res) => {
           setNotice({ type: 'success', text: res.message || 'Google Search Console connected successfully!' });
-          navigate('/gsc-connection', { replace: true });
           loadProperties();
           loadConfigStatus();
         })
         .catch((err) => {
-          setNotice({ type: 'error', text: err.message || 'Failed connecting Google Search Console.' });
+          setNotice({ 
+            type: 'error', 
+            text: err.message || 'Authorization expired or invalid. Please click Authorize with Google again.' 
+          });
         })
         .finally(() => setConnecting(false));
     } else {
