@@ -300,6 +300,20 @@ def trigger_property_sync(
     if not prop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found.")
 
+    # Prevent spawning duplicate concurrent syncs
+    from datetime import timedelta
+    recent_running = db.query(SyncRun).filter(
+        SyncRun.property_id == prop.id,
+        SyncRun.status == "RUNNING",
+        SyncRun.start_time > datetime.now(timezone.utc) - timedelta(minutes=5)
+    ).first()
+    if recent_running:
+        return {
+            "status": "RUNNING",
+            "message": f"Synchronization for '{prop.site_url}' is already in progress.",
+            "property_id": prop.id
+        }
+
     background_tasks.add_task(
         _run_sync_task,
         property_id=prop.id,

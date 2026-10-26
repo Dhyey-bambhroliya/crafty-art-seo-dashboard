@@ -25,6 +25,20 @@ def execute_synchronization(
         raise ValueError(f"Property ID {property_id} not found.")
 
     start_time = datetime.now(timezone.utc)
+
+    # Auto-resolve stale runs older than 10 minutes that were orphaned by previous restarts
+    stale_cutoff = start_time - timedelta(minutes=10)
+    db.query(SyncRun).filter(
+        SyncRun.property_id == prop.id,
+        SyncRun.status == "RUNNING",
+        SyncRun.start_time < stale_cutoff
+    ).update({
+        SyncRun.status: "TIMEOUT",
+        SyncRun.end_time: start_time,
+        SyncRun.error_message: "Sync timed out or was interrupted by server restart."
+    }, synchronize_session=False)
+    db.commit()
+
     sync_run = SyncRun(
         property_id=prop.id,
         triggered_by=triggered_by,
@@ -113,6 +127,8 @@ def execute_synchronization(
         unique_pages = set()
         start_row = 0
         batch_size = 5000
+        max_batches = 15  # Up to 75,000 page-date records per sync for high performance
+        batch_count = 0
         touched_in_run: Set[Tuple[str, date]] = set()
 
         active_site_url = prop.site_url
@@ -166,8 +182,6 @@ def execute_synchronization(
                 break
 
             # Aggregate batch rows by (normalized_url, metric_date)
-            # This handles cases where multiple URLs returned by GSC (e.g. trailing slashes, params)
-            # normalize to the same URL for the same date.
             aggregated_rows: Dict[Tuple[str, date], Dict[str, Any]] = {}
             for r in batch_rows:
                 norm_url = r["normalized_url"]
@@ -190,18 +204,30 @@ def execute_synchronization(
                     agg["impressions"] += r["impressions"]
                     agg["pos_imp_sum"] += r["position"] * r["impressions"]
 
+            # HIGH-PERFORMANCE BULK LOOKUP:
+            # Query existing records for this batch in chunked IN-clauses instead of thousands of single SELECTs
+            batch_urls = list({k[0] for k in aggregated_rows.keys()})
+            batch_dates = list({k[1] for k in aggregated_rows.keys()})
+
+            existing_records = []
+            chunk_size = 400
+            for i in range(0, len(batch_urls), chunk_size):
+                url_chunk = batch_urls[i:i + chunk_size]
+                chunk_records = db.query(DailyPageMetrics).filter(
+                    DailyPageMetrics.property_id == prop.id,
+                    DailyPageMetrics.normalized_url.in_(url_chunk),
+                    DailyPageMetrics.date.in_(batch_dates)
+                ).all()
+                existing_records.extend(chunk_records)
+            existing_map = {(m.normalized_url, m.date): m for m in existing_records}
+
             for (norm_url, metric_date), agg in aggregated_rows.items():
                 total_clicks = agg["clicks"]
                 total_impressions = agg["impressions"]
                 ctr = (total_clicks / total_impressions * 100.0) if total_impressions > 0 else 0.0
                 position = (agg["pos_imp_sum"] / total_impressions) if total_impressions > 0 else 0.0
 
-                # Check for existing record in database
-                existing = db.query(DailyPageMetrics).filter(
-                    DailyPageMetrics.property_id == prop.id,
-                    DailyPageMetrics.normalized_url == norm_url,
-                    DailyPageMetrics.date == metric_date
-                ).first()
+                existing = existing_map.get((norm_url, metric_date))
 
                 if existing:
                     if (norm_url, metric_date) in touched_in_run:
@@ -223,7 +249,7 @@ def execute_synchronization(
                         existing.is_synthetic = False
                         touched_in_run.add((norm_url, metric_date))
                 else:
-                    db.add(DailyPageMetrics(
+                    new_item = DailyPageMetrics(
                         property_id=prop.id,
                         page_url=agg["page_url"],
                         normalized_url=norm_url,
@@ -233,13 +259,16 @@ def execute_synchronization(
                         ctr=ctr,
                         position=position,
                         is_synthetic=False
-                    ))
+                    )
+                    db.add(new_item)
+                    existing_map[(norm_url, metric_date)] = new_item
                     touched_in_run.add((norm_url, metric_date))
 
                 records_upserted += 1
 
             db.commit()
-            if len(batch_rows) < batch_size:
+            batch_count += 1
+            if len(batch_rows) < batch_size or batch_count >= max_batches:
                 break
             start_row += batch_size
 
