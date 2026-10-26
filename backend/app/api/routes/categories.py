@@ -44,13 +44,21 @@ def list_categories(
         query = query.filter(Category.status == status_filter.upper())
 
     categories = query.order_by(Category.name).all()
+    if not categories:
+        return []
+
+    cat_ids = [c.id for c in categories]
+    # Fetch page counts in 1 aggregated query
+    counts_rows = (
+        db.query(CategoryPage.category_id, func.count(CategoryPage.id))
+        .filter(CategoryPage.category_id.in_(cat_ids), CategoryPage.status == "ACTIVE")
+        .group_by(CategoryPage.category_id)
+        .all()
+    )
+    counts_map = dict(counts_rows)
+
     results = []
     for cat in categories:
-        page_count = db.query(CategoryPage).filter(
-            CategoryPage.category_id == cat.id,
-            CategoryPage.status == "ACTIVE"
-        ).count()
-
         results.append(CategoryOut(
             id=cat.id,
             name=cat.name,
@@ -59,7 +67,7 @@ def list_categories(
             leader_name=cat.leader.full_name if cat.leader else "Unassigned",
             leader_email=cat.leader.email if cat.leader else None,
             status=cat.status,
-            page_count=page_count,
+            page_count=counts_map.get(cat.id, 0),
             created_at=cat.created_at,
             updated_at=cat.updated_at
         ))

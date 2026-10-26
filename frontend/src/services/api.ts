@@ -10,6 +10,9 @@ const BASE_URL = API_ORIGIN
   : '/api';
 
 class ApiClient {
+  private cache = new Map<string, { data: any; expiry: number }>();
+  private inFlight = new Map<string, Promise<any>>();
+
   private getToken(): string | null {
     return localStorage.getItem('crafty_art_auth_token');
   }
@@ -21,38 +24,89 @@ class ApiClient {
   public clearToken(): void {
     localStorage.removeItem('crafty_art_auth_token');
     localStorage.removeItem('crafty_art_user');
+    this.cache.clear();
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = this.getToken();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> || {}),
-    };
+  public clearCache(): void {
+    this.cache.clear();
+  }
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    ttlMs: number = 0 // Cache TTL in ms (0 = disabled, for mutations or real-time polling)
+  ): Promise<T> {
+    const isGet = !options.method || options.method.toUpperCase() === 'GET';
+
+    // Invalidate cache on mutations (POST, PUT, DELETE)
+    if (!isGet) {
+      this.cache.clear();
     }
 
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    const token = this.getToken();
+    const cacheKey = `${token || ''}:${endpoint}`;
 
-    if (response.status === 401) {
-      this.clearToken();
-      if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/setup')) {
-        window.location.href = '/login';
+    // Return cached data if valid
+    if (isGet && ttlMs > 0) {
+      const cached = this.cache.get(cacheKey);
+      if (cached && cached.expiry > Date.now()) {
+        return cached.data as T;
       }
     }
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const message = errorData.detail || errorData.message || `Request failed with status ${response.status}`;
-      throw new Error(message);
+    // Deduplicate identical in-flight GET requests
+    if (isGet && this.inFlight.has(cacheKey)) {
+      return this.inFlight.get(cacheKey)!;
     }
 
-    return response.json();
+    const fetchPromise = (async () => {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...(options.headers as Record<string, string> || {}),
+        };
+
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+          ...options,
+          headers,
+        });
+
+        if (response.status === 401) {
+          this.clearToken();
+          if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/setup')) {
+            window.location.href = '/login';
+          }
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          const message = errorData.detail || errorData.message || `Request failed with status ${response.status}`;
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+
+        if (isGet && ttlMs > 0) {
+          this.cache.set(cacheKey, { data, expiry: Date.now() + ttlMs });
+        }
+
+        return data as T;
+      } finally {
+        if (isGet) {
+          this.inFlight.delete(cacheKey);
+        }
+      }
+    })();
+
+    if (isGet) {
+      this.inFlight.set(cacheKey, fetchPromise);
+    }
+
+    return fetchPromise;
   }
 
   // ---------------- AUTH ----------------
@@ -124,11 +178,11 @@ class ApiClient {
     if (params?.leader_id) query.append('leader_id', params.leader_id.toString());
     if (params?.search) query.append('search', params.search);
     if (params?.status_filter) query.append('status_filter', params.status_filter);
-    return this.request<Category[]>(`/categories?${query.toString()}`);
+    return this.request<Category[]>(`/categories?${query.toString()}`, {}, 60000); // 1 minute cache
   }
 
   async getCategoryDetails(id: number): Promise<any> {
-    return this.request<any>(`/categories/${id}`);
+    return this.request<any>(`/categories/${id}`, {}, 60000);
   }
 
   async createCategory(data: { name: string; description?: string; assigned_leader_id: number }): Promise<Category> {
@@ -192,7 +246,7 @@ class ApiClient {
     if (params?.leader_id) query.append('leader_id', params.leader_id.toString());
     if (params?.sort_by) query.append('sort_by', params.sort_by);
     if (params?.search) query.append('search', params.search);
-    return this.request<any[]>(`/pages?${query.toString()}`);
+    return this.request<any[]>(`/pages?${query.toString()}`, {}, 60000);
   }
 
   async getLandingPageTraffic(params?: {
@@ -210,11 +264,11 @@ class ApiClient {
     if (params?.sort_by) query.append('sort_by', params.sort_by);
     if (params?.page) query.append('page', params.page.toString());
     if (params?.page_size) query.append('page_size', params.page_size.toString());
-    return this.request<LandingPageTrafficResponse>(`/pages/traffic?${query.toString()}`);
+    return this.request<LandingPageTrafficResponse>(`/pages/traffic?${query.toString()}`, {}, 60000);
   }
 
   async getPageDetail(pageId: number): Promise<any> {
-    return this.request<any>(`/pages/${pageId}`);
+    return this.request<any>(`/pages/${pageId}`, {}, 60000);
   }
 
   // ---------------- DASHBOARD ----------------
@@ -223,7 +277,7 @@ class ApiClient {
     if (params?.leader_id) query.append('leader_id', params.leader_id.toString());
     if (params?.category_id) query.append('category_id', params.category_id.toString());
     if (params?.property_id) query.append('property_id', params.property_id.toString());
-    return this.request<DashboardKPIs>(`/dashboard/kpis?${query.toString()}`);
+    return this.request<DashboardKPIs>(`/dashboard/kpis?${query.toString()}`, {}, 60000); // 1 minute cache
   }
 
   async getDashboardTrends(params?: { leader_id?: number; category_id?: number; property_id?: number }): Promise<DailyTrendPoint[]> {
@@ -231,12 +285,12 @@ class ApiClient {
     if (params?.leader_id) query.append('leader_id', params.leader_id.toString());
     if (params?.category_id) query.append('category_id', params.category_id.toString());
     if (params?.property_id) query.append('property_id', params.property_id.toString());
-    return this.request<DailyTrendPoint[]>(`/dashboard/trends?${query.toString()}`);
+    return this.request<DailyTrendPoint[]>(`/dashboard/trends?${query.toString()}`, {}, 60000); // 1 minute cache
   }
 
   async getCategoriesSummary(leader_id?: number): Promise<any[]> {
     const query = leader_id ? `?leader_id=${leader_id}` : '';
-    return this.request<any[]>(`/dashboard/categories-summary${query}`);
+    return this.request<any[]>(`/dashboard/categories-summary${query}`, {}, 60000); // 1 minute cache
   }
 
   // ---------------- ALERTS ----------------

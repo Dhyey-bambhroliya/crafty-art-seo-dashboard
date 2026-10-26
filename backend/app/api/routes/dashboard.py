@@ -129,33 +129,48 @@ def get_categories_comparison_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_team_leader_or_manager)
 ):
-    """Returns all categories with their 28-day vs previous 28-day performance summary."""
+    """Returns all categories with their 28-day vs previous 28-day performance summary (optimized batch query)."""
     query = db.query(Category).join(User, Category.assigned_leader_id == User.id).filter(Category.status == "ACTIVE")
     if leader_id:
         query = query.filter(Category.assigned_leader_id == leader_id)
     categories = query.order_by(Category.name).all()
 
+    if not categories:
+        return []
+
+    cat_ids = [c.id for c in categories]
+
+    # Fetch all active pages for all categories in 1 query
+    all_pages = db.query(CategoryPage).filter(
+        CategoryPage.category_id.in_(cat_ids),
+        CategoryPage.status == "ACTIVE"
+    ).all()
+
+    # Group page normalized_urls by category_id
+    cat_to_urls = {cid: [] for cid in cat_ids}
+    all_norm_urls = set()
+    for p in all_pages:
+        cat_to_urls[p.category_id].append(p.normalized_url)
+        all_norm_urls.add(p.normalized_url)
+
     latest_date = get_latest_data_date(db)
     curr_start, curr_end, prev_start, prev_end = get_28day_date_windows(latest_date)
 
+    # Bulk query metrics for ALL urls in 2 queries instead of 2 * len(categories)
+    curr_m = get_page_aggregated_metrics(db, list(all_norm_urls), curr_start, curr_end)
+    prev_m = get_page_aggregated_metrics(db, list(all_norm_urls), prev_start, prev_end)
+
     results = []
     for cat in categories:
-        pages = db.query(CategoryPage).filter(
-            CategoryPage.category_id == cat.id,
-            CategoryPage.status == "ACTIVE"
-        ).all()
-        norm_urls = [p.normalized_url for p in pages]
+        norm_urls = cat_to_urls.get(cat.id, [])
 
-        curr_m = get_page_aggregated_metrics(db, norm_urls, curr_start, curr_end)
-        prev_m = get_page_aggregated_metrics(db, norm_urls, prev_start, prev_end)
+        c_clicks = sum(curr_m.get(u, {}).get("clicks", 0) for u in norm_urls)
+        c_imps = sum(curr_m.get(u, {}).get("impressions", 0) for u in norm_urls)
+        c_pos = sum(curr_m.get(u, {}).get("pos_imp_sum", 0.0) for u in norm_urls)
 
-        c_clicks = sum(m["clicks"] for m in curr_m.values())
-        c_imps = sum(m["impressions"] for m in curr_m.values())
-        c_pos = sum(m["pos_imp_sum"] for m in curr_m.values())
-
-        p_clicks = sum(m["clicks"] for m in prev_m.values())
-        p_imps = sum(m["impressions"] for m in prev_m.values())
-        p_pos = sum(m["pos_imp_sum"] for m in prev_m.values())
+        p_clicks = sum(prev_m.get(u, {}).get("clicks", 0) for u in norm_urls)
+        p_imps = sum(prev_m.get(u, {}).get("impressions", 0) for u in norm_urls)
+        p_pos = sum(prev_m.get(u, {}).get("pos_imp_sum", 0.0) for u in norm_urls)
 
         comp = calculate_comparison_metrics(c_clicks, c_imps, c_pos, p_clicks, p_imps, p_pos)
 
@@ -164,7 +179,7 @@ def get_categories_comparison_summary(
             name=cat.name,
             assigned_leader_id=cat.assigned_leader_id,
             leader_name=cat.leader.full_name if cat.leader else "Unassigned",
-            page_count=len(pages),
+            page_count=len(norm_urls),
             status=cat.status,
             metrics=comp
         ))
