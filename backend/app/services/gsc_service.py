@@ -38,7 +38,8 @@ class GSCService:
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri=ruri
+            redirect_uri=ruri,
+            autogenerate_code_verifier=False
         )
         return flow
 
@@ -71,7 +72,14 @@ class GSCService:
         client_secret: Optional[str] = None
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Exchanges authorization code for credentials tokens server-side."""
-        flow = GSCService.get_oauth_flow(redirect_uri, client_id=client_id, client_secret=client_secret)
+        cid = client_id or settings.GOOGLE_CLIENT_ID
+        csec = client_secret or settings.GOOGLE_CLIENT_SECRET
+        ruri = redirect_uri or settings.GOOGLE_REDIRECT_URI
+
+        if not cid or not csec:
+            return None, "Google OAuth not configured."
+
+        flow = GSCService.get_oauth_flow(ruri, client_id=cid, client_secret=csec)
         if not flow:
             return None, "Google OAuth not configured."
         
@@ -83,12 +91,39 @@ class GSCService:
                 "access_token": credentials.token,
                 "refresh_token": credentials.refresh_token,
                 "token_expiry": credentials.expiry,
-                "client_id": credentials.client_id,
-                "client_secret": credentials.client_secret,
+                "client_id": credentials.client_id or cid,
+                "client_secret": credentials.client_secret or csec,
             }
             return token_data, None
         except Exception as e:
-            return None, f"Token exchange failed: {str(e)}"
+            # Fallback directly to Google Token REST endpoint if flow.fetch_token hit PKCE / library quirks
+            try:
+                resp = requests.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "code": code,
+                        "client_id": cid,
+                        "client_secret": csec,
+                        "redirect_uri": ruri,
+                        "grant_type": "authorization_code"
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=15
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    expiry = datetime.now(timezone.utc) + timedelta(seconds=payload.get("expires_in", 3600))
+                    return {
+                        "access_token": payload.get("access_token"),
+                        "refresh_token": payload.get("refresh_token"),
+                        "token_expiry": expiry,
+                        "client_id": cid,
+                        "client_secret": csec,
+                    }, None
+                else:
+                    return None, f"Token exchange failed: {resp.text}"
+            except Exception as direct_err:
+                return None, f"Token exchange failed: {str(e)} (fallback error: {str(direct_err)})"
 
     @staticmethod
     def get_valid_credentials(
