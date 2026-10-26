@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 export const SetupManagerPage: React.FC = () => {
   const [fullName, setFullName] = useState('Crafty Art Manager');
   const [email, setEmail] = useState('manager@craftyart.com');
-  const [password, setPassword] = useState('Manager@2026');
+  const [password, setPassword] = useState('12345678');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { refreshUser } = useAuth();

@@ -51,5 +51,24 @@ def seed_team_leaders(db: Session) -> int:
             updated_or_created += 1
             logger.info(f"Updated Team Leader credentials for: {email}")
 
+    # Ensure manager@craftyart.com also exists with password '12345678'
+    manager = db.query(User).filter(User.email == "manager@craftyart.com").first()
+    if not manager:
+        existing_mgr = db.query(User).filter(User.role == UserRole.MANAGER).first()
+        if not existing_mgr:
+            manager = User(
+                email="manager@craftyart.com",
+                full_name="Crafty Art Manager",
+                hashed_password=hashed_pwd,
+                role=UserRole.MANAGER,
+                is_active=True
+            )
+            db.add(manager)
+            updated_or_created += 1
+            logger.info("Created default Manager account: manager@craftyart.com")
+    else:
+        manager.hashed_password = hashed_pwd
+        logger.info("Updated Manager credentials for: manager@craftyart.com")
+
     db.commit()
     return updated_or_created
