@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urlparse, urlunparse
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
@@ -241,3 +241,157 @@ def get_daily_trends(
         curr_day += timedelta(days=1)
     
     return trends
+
+def get_landing_page_traffic_metrics(
+    db: Session,
+    normalized_urls: List[str],
+    latest_date: Optional[date] = None
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+    """
+    Computes rolling 3d, 7d, 28d GSC metrics along with 7d vs 7d and 28d vs 28d comparisons
+    in a single, optimized SQL query across all mapped URLs.
+    Handles zero previous-period traffic gracefully without division-by-zero.
+    """
+    if not latest_date:
+        latest_date = get_latest_data_date(db)
+    if not latest_date:
+        latest_date = date.today() - timedelta(days=2)
+
+    # Date windows
+    d1_date = latest_date
+    d3_start = latest_date - timedelta(days=2)
+    d7_curr_start = latest_date - timedelta(days=6)
+    d7_prev_start = latest_date - timedelta(days=13)
+    d7_prev_end = latest_date - timedelta(days=7)
+    d28_curr_start = latest_date - timedelta(days=27)
+    d28_prev_start = latest_date - timedelta(days=55)
+    d28_prev_end = latest_date - timedelta(days=28)
+
+    reporting_ranges = {
+        "latest_gsc_date": str(d1_date),
+        "range_3d": f"{d3_start.strftime('%b %d')} - {latest_date.strftime('%b %d, %Y')}",
+        "range_7d": f"{d7_curr_start.strftime('%b %d')} - {latest_date.strftime('%b %d, %Y')}",
+        "range_28d": f"{d28_curr_start.strftime('%b %d')} - {latest_date.strftime('%b %d, %Y')}",
+    }
+
+    if not normalized_urls:
+        return {}, reporting_ranges
+
+    # Single bulk query spanning 56 days
+    rows = (
+        db.query(
+            DailyPageMetrics.normalized_url,
+            DailyPageMetrics.date,
+            DailyPageMetrics.clicks,
+            DailyPageMetrics.impressions,
+            (DailyPageMetrics.position * DailyPageMetrics.impressions).label("pos_imp_sum")
+        )
+        .filter(
+            DailyPageMetrics.normalized_url.in_(normalized_urls),
+            DailyPageMetrics.date >= d28_prev_start,
+            DailyPageMetrics.date <= latest_date
+        )
+        .all()
+    )
+
+    # Initialize buckets per URL
+    url_data = {}
+    for nu in normalized_urls:
+        url_data[nu] = {
+            "d1_clicks": 0,
+            "d3": {"clicks": 0, "impressions": 0, "pos_imp_sum": 0.0},
+            "d7_curr": {"clicks": 0, "impressions": 0, "pos_imp_sum": 0.0},
+            "d7_prev": {"clicks": 0, "impressions": 0, "pos_imp_sum": 0.0},
+            "d28_curr": {"clicks": 0, "impressions": 0, "pos_imp_sum": 0.0},
+            "d28_prev": {"clicks": 0, "impressions": 0, "pos_imp_sum": 0.0},
+        }
+
+    for r in rows:
+        nu = r.normalized_url
+        if nu not in url_data:
+            continue
+        c = int(r.clicks or 0)
+        im = int(r.impressions or 0)
+        pi = float(r.pos_imp_sum or 0.0)
+        r_date = r.date
+
+        if r_date == d1_date:
+            url_data[nu]["d1_clicks"] += c
+
+        if r_date >= d3_start:
+            url_data[nu]["d3"]["clicks"] += c
+            url_data[nu]["d3"]["impressions"] += im
+            url_data[nu]["d3"]["pos_imp_sum"] += pi
+
+        if r_date >= d7_curr_start:
+            url_data[nu]["d7_curr"]["clicks"] += c
+            url_data[nu]["d7_curr"]["impressions"] += im
+            url_data[nu]["d7_curr"]["pos_imp_sum"] += pi
+        elif d7_prev_start <= r_date <= d7_prev_end:
+            url_data[nu]["d7_prev"]["clicks"] += c
+            url_data[nu]["d7_prev"]["impressions"] += im
+            url_data[nu]["d7_prev"]["pos_imp_sum"] += pi
+
+        if r_date >= d28_curr_start:
+            url_data[nu]["d28_curr"]["clicks"] += c
+            url_data[nu]["d28_curr"]["impressions"] += im
+            url_data[nu]["d28_curr"]["pos_imp_sum"] += pi
+        elif d28_prev_start <= r_date <= d28_prev_end:
+            url_data[nu]["d28_prev"]["clicks"] += c
+            url_data[nu]["d28_prev"]["impressions"] += im
+            url_data[nu]["d28_prev"]["pos_imp_sum"] += pi
+
+    results = {}
+    for nu, d in url_data.items():
+        def _build_window(w: Dict[str, Any], s_date: date, e_date: date) -> Dict[str, Any]:
+            cl = w["clicks"]
+            im = w["impressions"]
+            ctr = round((cl / im * 100.0), 2) if im > 0 else 0.0
+            pos = round((w["pos_imp_sum"] / im), 2) if im > 0 else 0.0
+            return {
+                "clicks": cl,
+                "impressions": im,
+                "ctr": ctr,
+                "position": pos,
+                "start_date": str(s_date),
+                "end_date": str(e_date),
+            }
+
+        def _build_comp(curr_w: Dict[str, Any], prev_w: Dict[str, Any]) -> Dict[str, Any]:
+            curr_cl = curr_w["clicks"]
+            prev_cl = prev_w["clicks"]
+            diff = curr_cl - prev_cl
+            if prev_cl > 0:
+                pct = round((diff / prev_cl) * 100.0, 2)
+            elif curr_cl > 0:
+                pct = 100.0
+            else:
+                pct = 0.0
+            
+            status = "GROWTH" if diff > 0 else ("DECLINE" if diff < 0 else "NEUTRAL")
+            return {
+                "current_clicks": curr_cl,
+                "previous_clicks": prev_cl,
+                "click_diff": diff,
+                "pct_change": pct,
+                "status": status,
+            }
+
+        w3 = _build_window(d["d3"], d3_start, latest_date)
+        w7 = _build_window(d["d7_curr"], d7_curr_start, latest_date)
+        w28 = _build_window(d["d28_curr"], d28_curr_start, latest_date)
+
+        comp7 = _build_comp(d["d7_curr"], d["d7_prev"])
+        comp28 = _build_comp(d["d28_curr"], d["d28_prev"])
+
+        results[nu] = {
+            "latest_gsc_day_clicks": d["d1_clicks"],
+            "latest_gsc_date": str(d1_date),
+            "traffic_3d": w3,
+            "traffic_7d": w7,
+            "traffic_28d": w28,
+            "comparison_7d": comp7,
+            "comparison_28d": comp28,
+        }
+
+    return results, reporting_ranges

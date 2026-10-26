@@ -285,3 +285,60 @@ class SyncRunOut(BaseModel):
     error_message: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+# ----------------- LANDING PAGE TRAFFIC MONITORING -----------------
+class TrafficWindowMetrics(BaseModel):
+    clicks: int = 0
+    impressions: int = 0
+    ctr: float = 0.0
+    position: float = 0.0
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+class TrafficComparison(BaseModel):
+    current_clicks: int = 0
+    previous_clicks: int = 0
+    click_diff: int = 0
+    pct_change: float = 0.0
+    status: str = "NEUTRAL"  # GROWTH, DECLINE, NEUTRAL
+
+class LandingPageTrafficItem(BaseModel):
+    id: int
+    full_url: str
+    normalized_url: str
+    category_id: int
+    category_name: str
+    assigned_leader_id: int
+    leader_name: str
+    ga4_status: str = "GA4 Required"
+    latest_gsc_day_clicks: int = 0
+    latest_gsc_date: Optional[str] = None
+    traffic_3d: TrafficWindowMetrics
+    traffic_7d: TrafficWindowMetrics
+    traffic_28d: TrafficWindowMetrics
+    comparison_7d: TrafficComparison
+    comparison_28d: TrafficComparison
+    last_updated: Optional[str] = None
+
+class LandingPageTrafficSummary(BaseModel):
+    total_pages_monitored: int = 0
+    total_clicks_7d: int = 0
+    total_clicks_28d: int = 0
+    total_impressions_28d: int = 0
+    avg_position_28d: float = 0.0
+    growing_pages_count: int = 0
+    declining_pages_count: int = 0
+    ga4_connected: bool = False
+    latest_data_date: Optional[str] = None
+    reporting_range_28d: Optional[str] = None
+    reporting_range_7d: Optional[str] = None
+    reporting_range_3d: Optional[str] = None
+    last_sync_time: Optional[str] = None
+
+class LandingPageTrafficResponse(BaseModel):
+    items: List[LandingPageTrafficItem]
+    total_items: int
+    page: int
+    page_size: int
+    total_pages: int
+    summary: LandingPageTrafficSummary

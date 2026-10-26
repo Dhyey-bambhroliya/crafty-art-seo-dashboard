@@ -194,3 +194,64 @@ export interface GSCConfigStatus {
   redirect_uri: string;
 }
 
+export interface TrafficWindowMetrics {
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+  start_date?: string;
+  end_date?: string;
+}
+
+export interface TrafficComparison {
+  current_clicks: number;
+  previous_clicks: number;
+  click_diff: number;
+  pct_change: number;
+  status: 'GROWTH' | 'DECLINE' | 'NEUTRAL';
+}
+
+export interface LandingPageTrafficItem {
+  id: number;
+  full_url: string;
+  normalized_url: string;
+  category_id: number;
+  category_name: string;
+  assigned_leader_id: number;
+  leader_name: string;
+  ga4_status: string;
+  latest_gsc_day_clicks: number;
+  latest_gsc_date?: string;
+  traffic_3d: TrafficWindowMetrics;
+  traffic_7d: TrafficWindowMetrics;
+  traffic_28d: TrafficWindowMetrics;
+  comparison_7d: TrafficComparison;
+  comparison_28d: TrafficComparison;
+  last_updated?: string;
+}
+
+export interface LandingPageTrafficSummary {
+  total_pages_monitored: number;
+  total_clicks_7d: number;
+  total_clicks_28d: number;
+  total_impressions_28d: number;
+  avg_position_28d: number;
+  growing_pages_count: number;
+  declining_pages_count: number;
+  ga4_connected: boolean;
+  latest_data_date?: string;
+  reporting_range_28d?: string;
+  reporting_range_7d?: string;
+  reporting_range_3d?: string;
+  last_sync_time?: string;
+}
+
+export interface LandingPageTrafficResponse {
+  items: LandingPageTrafficItem[];
+  total_items: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  summary: LandingPageTrafficSummary;
+}
+

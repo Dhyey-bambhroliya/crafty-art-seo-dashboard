@@ -32,6 +32,11 @@ from backend.app.schemas.schemas import (
     GSCPropertyOut,
     GSCAuthUrlOut,
     SyncRunOut,
+    TrafficWindowMetrics,
+    TrafficComparison,
+    LandingPageTrafficItem,
+    LandingPageTrafficSummary,
+    LandingPageTrafficResponse,
 )
 
 __all__ = [
@@ -68,4 +73,9 @@ __all__ = [
     "GSCPropertyOut",
     "GSCAuthUrlOut",
     "SyncRunOut",
+    "TrafficWindowMetrics",
+    "TrafficComparison",
+    "LandingPageTrafficItem",
+    "LandingPageTrafficSummary",
+    "LandingPageTrafficResponse",
 ]

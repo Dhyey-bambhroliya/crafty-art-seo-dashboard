@@ -1,6 +1,7 @@
 import {
   AuthResponse, SetupStatus, User, Category, CategoryPage,
-  Alert, AlertSetting, DashboardKPIs, DailyTrendPoint, GSCProperty, SyncRun
+  Alert, AlertSetting, DashboardKPIs, DailyTrendPoint, GSCProperty, SyncRun,
+  LandingPageTrafficResponse
 } from '../types';
 const API_ORIGIN = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 
@@ -192,6 +193,24 @@ class ApiClient {
     if (params?.sort_by) query.append('sort_by', params.sort_by);
     if (params?.search) query.append('search', params.search);
     return this.request<any[]>(`/pages?${query.toString()}`);
+  }
+
+  async getLandingPageTraffic(params?: {
+    category_id?: number;
+    leader_id?: number;
+    search?: string;
+    sort_by?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<LandingPageTrafficResponse> {
+    const query = new URLSearchParams();
+    if (params?.category_id) query.append('category_id', params.category_id.toString());
+    if (params?.leader_id) query.append('leader_id', params.leader_id.toString());
+    if (params?.search) query.append('search', params.search);
+    if (params?.sort_by) query.append('sort_by', params.sort_by);
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.page_size) query.append('page_size', params.page_size.toString());
+    return this.request<LandingPageTrafficResponse>(`/pages/traffic?${query.toString()}`);
   }
 
   async getPageDetail(pageId: number): Promise<any> {

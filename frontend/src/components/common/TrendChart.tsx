@@ -67,41 +67,37 @@ export const TrendChart: React.FC<TrendChartProps> = ({
         <div className="flex items-center space-x-1 p-1 bg-slate-950/80 rounded-xl border border-slate-800 self-start">
           <button
             onClick={() => setMetric('clicks')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              metric === 'clicks'
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${metric === 'clicks'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             Clicks
           </button>
           <button
             onClick={() => setMetric('impressions')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              metric === 'impressions'
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${metric === 'impressions'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             Impressions
           </button>
           <button
             onClick={() => setMetric('ctr')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              metric === 'ctr'
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${metric === 'ctr'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             CTR
           </button>
           <button
             onClick={() => setMetric('position')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              metric === 'position'
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${metric === 'position'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             Avg Position
           </button>
