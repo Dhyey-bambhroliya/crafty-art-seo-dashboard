@@ -304,30 +304,28 @@ export const FestivalDashboardPage: React.FC = () => {
           </Link>
 
           {isManager && (
-            <>
-              <button
-                onClick={() => {
-                  setIsSuggestionsOpen(true);
-                  handleLoadSuggestions();
-                }}
-                className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors"
-              >
-                <Sparkles className="w-4 h-4 text-purple-400" />
-                <span>Auto Suggestions</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  resetAddForm();
-                  setIsAddOpen(true);
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Festival</span>
-              </button>
-            </>
+            <button
+              onClick={() => {
+                setIsSuggestionsOpen(true);
+                handleLoadSuggestions();
+              }}
+              className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors"
+            >
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              <span>Auto Suggestions</span>
+            </button>
           )}
+
+          <button
+            onClick={() => {
+              resetAddForm();
+              setIsAddOpen(true);
+            }}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Festival</span>
+          </button>
         </div>
       </div>
 
@@ -525,8 +523,8 @@ export const FestivalDashboardPage: React.FC = () => {
           <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
             No festivals match your current filter settings for {yearFilter}. You can add a festival manually or generate suggestions.
           </p>
-          {isManager && (
-            <div className="flex justify-center gap-3 mt-5">
+          <div className="flex justify-center gap-3 mt-5">
+            {isManager && (
               <button
                 onClick={() => {
                   setIsSuggestionsOpen(true);
@@ -536,17 +534,17 @@ export const FestivalDashboardPage: React.FC = () => {
               >
                 Auto-Suggest Festivals
               </button>
-              <button
-                onClick={() => {
-                  resetAddForm();
-                  setIsAddOpen(true);
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
-              >
-                Create Custom Festival
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              onClick={() => {
+                resetAddForm();
+                setIsAddOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+            >
+              Create Custom Festival
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -817,17 +815,24 @@ export const FestivalDashboardPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">Assigned Team Leader *</label>
-                  <select
-                    value={addLeaderId}
-                    onChange={(e) => setAddLeaderId(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    {leaders.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.full_name} ({l.role})
-                      </option>
-                    ))}
-                  </select>
+                  {isManager ? (
+                    <select
+                      value={addLeaderId}
+                      onChange={(e) => setAddLeaderId(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      {leaders.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.full_name} ({l.role})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-emerald-400 flex items-center space-x-1.5">
+                      <User className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{user?.full_name} (Self)</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
