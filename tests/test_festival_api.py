@@ -249,3 +249,100 @@ def test_duplicate_festival_slug_and_year_rejection(client: TestClient, db_sessi
     res_yd2 = client.post(f"/api/festivals/{fest_id}/years", json=yd_payload, headers=headers)
     assert res_yd2.status_code == 400
     assert "already has date records" in res_yd2.text
+
+
+def test_festival_flat_form_fields_and_unconfigured_year_visibility(client: TestClient, db_session):
+    """
+    Verifies the fix for the live bug:
+    1. Frontend submits flat form fields (initial_year, start_date, end_date, date_status).
+    2. Backend schema automatically maps them into initial_year_date.
+    3. YearDate is created and festival is immediately visible under the year filter.
+    4. An unconfigured festival (no year dates at all) is ALSO returned under year filters so it is never hidden.
+    """
+    manager = User(email="mgr_livefix@craftyart.com", full_name="Live Fix Manager", hashed_password=hash_password("pwd"), role=UserRole.MANAGER)
+    leader = User(email="lead_livefix@craftyart.com", full_name="Live Fix Leader", hashed_password=hash_password("pwd"), role=UserRole.TEAM_LEADER)
+    db_session.add_all([manager, leader])
+    db_session.commit()
+
+    mgr_headers = get_auth_headers(manager)
+
+    # 1. Create with FLAT fields (exactly as frontend form sends)
+    flat_payload = {
+        "name": "Navratri Mahotsav",
+        "country_code": "IN",
+        "category_group": "Religious Festival",
+        "description": "Nine nights of celebrations",
+        "assigned_leader_id": leader.id,
+        "initial_year": 2026,
+        "start_date": "2026-10-11",
+        "end_date": "2026-10-19",
+        "date_status": "ESTIMATED"
+    }
+    create_res = client.post("/api/festivals", json=flat_payload, headers=mgr_headers)
+    assert create_res.status_code == 200, create_res.text
+    fest_data = create_res.json()
+    assert fest_data["name"] == "Navratri Mahotsav"
+    assert fest_data["upcoming_edition_year"] == 2026
+    assert fest_data["upcoming_start_date"] == "2026-10-11"
+    assert fest_data["date_status"] == "ESTIMATED"
+
+    # 2. Query with year=2026: MUST be returned!
+    list_year_res = client.get("/api/festivals?year=2026", headers=mgr_headers)
+    assert list_year_res.status_code == 200
+    slugs_2026 = [f["slug"] for f in list_year_res.json()]
+    assert "navratri-mahotsav" in slugs_2026
+
+    # 3. Create a festival WITHOUT any dates (unconfigured)
+    nodate_payload = {
+        "name": "Empty Dates Festival",
+        "country_code": "IN",
+        "category_group": "Cultural",
+        "assigned_leader_id": leader.id
+    }
+    create_nodate = client.post("/api/festivals", json=nodate_payload, headers=mgr_headers)
+    assert create_nodate.status_code == 200
+    assert create_nodate.json()["upcoming_edition_year"] is None
+
+    # Query with year=2026: The unconfigured festival MUST STILL be visible (not hidden)!
+    list_after = client.get("/api/festivals?year=2026", headers=mgr_headers)
+    assert list_after.status_code == 200
+    slugs_after = [f["slug"] for f in list_after.json()]
+    assert "empty-dates-festival" in slugs_after
+
+    # Query with no year filter: BOTH must be visible!
+    list_all = client.get("/api/festivals", headers=mgr_headers)
+    assert list_all.status_code == 200
+    slugs_all = [f["slug"] for f in list_all.json()]
+    assert "navratri-mahotsav" in slugs_all
+    assert "empty-dates-festival" in slugs_all
+
+
+def test_team_leader_creation_and_immediate_visibility(client: TestClient, db_session):
+    """
+    Verifies that when a Team Leader creates a festival:
+    1. It is automatically assigned strictly to the Team Leader.
+    2. It appears immediately in the Team Leader's festival list.
+    """
+    leader = User(email="tl_create_vis@craftyart.com", full_name="Visible Leader", hashed_password=hash_password("pwd"), role=UserRole.TEAM_LEADER)
+    db_session.add(leader)
+    db_session.commit()
+    tl_headers = get_auth_headers(leader)
+
+    tl_payload = {
+        "name": "Leader Special Fest",
+        "country_code": "IN",
+        "initial_year": 2026,
+        "start_date": "2026-12-01",
+        "end_date": "2026-12-05",
+        "date_status": "VERIFIED"
+    }
+    create_res = client.post("/api/festivals", json=tl_payload, headers=tl_headers)
+    assert create_res.status_code == 200, create_res.text
+    fest_data = create_res.json()
+    assert fest_data["assigned_leader_id"] == leader.id
+
+    # Team Leader lists festivals with year=2026
+    list_res = client.get("/api/festivals?year=2026", headers=tl_headers)
+    assert list_res.status_code == 200
+    slugs = [f["slug"] for f in list_res.json()]
+    assert "leader-special-fest" in slugs

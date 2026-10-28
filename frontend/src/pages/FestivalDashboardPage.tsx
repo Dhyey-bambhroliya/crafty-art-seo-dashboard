@@ -40,7 +40,7 @@ export const FestivalDashboardPage: React.FC = () => {
 
   // Filters
   const [countryFilter, setCountryFilter] = useState<string>('ALL');
-  const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
+  const [yearFilter, setYearFilter] = useState<number | undefined>(new Date().getFullYear());
   const [leaderFilter, setLeaderFilter] = useState<number | undefined>(undefined);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'VERIFIED' | 'ESTIMATED'>('ALL');
@@ -103,7 +103,10 @@ export const FestivalDashboardPage: React.FC = () => {
       ]);
 
       setFestivals(fests);
-      if (isManager) {
+      if (isManager && leadersRes.length > 0) {
+        setLeaders(leadersRes);
+        setAddLeaderId((prev) => prev || leadersRes[0].id);
+      } else if (isManager) {
         setLeaders(leadersRes);
       }
 
@@ -143,21 +146,43 @@ export const FestivalDashboardPage: React.FC = () => {
     setFormError(null);
     setFormSubmitting(true);
     try {
-      await festivalApi.createFestival({
+      const targetLeaderId = isManager ? (addLeaderId || leaders[0]?.id || user?.id) : user?.id;
+      const payload: any = {
         name: addName.trim(),
         country_code: addCountry,
         region: addRegion.trim() || undefined,
         category_group: addCategoryGroup,
         description: addDescription.trim() || undefined,
-        assigned_leader_id: isManager ? addLeaderId : user?.id,
-        initial_year: addYear,
-        start_date: addStartDate,
-        end_date: addEndDate || addStartDate,
-        date_status: addDateStatus,
-      });
+        assigned_leader_id: targetLeaderId,
+      };
+
+      if (addStartDate) {
+        payload.initial_year_date = {
+          year: addYear,
+          start_date: addStartDate,
+          end_date: addEndDate || addStartDate,
+          date_status: addDateStatus,
+        };
+        payload.initial_year = addYear;
+        payload.start_date = addStartDate;
+        payload.end_date = addEndDate || addStartDate;
+        payload.date_status = addDateStatus;
+      }
+
+      await festivalApi.createFestival(payload);
 
       setIsAddOpen(false);
       resetAddForm();
+
+      // Ensure newly created item is immediately visible by clearing restrictive filters
+      setSearchTerm('');
+      if (countryFilter !== 'ALL' && countryFilter !== addCountry) {
+        setCountryFilter('ALL');
+      }
+      if (leaderFilter && targetLeaderId && leaderFilter !== targetLeaderId) {
+        setLeaderFilter(undefined);
+      }
+
       loadFestivals();
     } catch (err: any) {
       setFormError(err.message || 'Failed to create festival.');
@@ -172,6 +197,8 @@ export const FestivalDashboardPage: React.FC = () => {
     setAddRegion('');
     setAddDescription('');
     setAddCategoryGroup('RELIGIOUS');
+    setAddLeaderId(leaders[0]?.id || user?.id || 1);
+    setAddYear(new Date().getFullYear());
     setAddStartDate('');
     setAddEndDate('');
     setAddDateStatus('ESTIMATED');
@@ -418,10 +445,11 @@ export const FestivalDashboardPage: React.FC = () => {
           <div className="flex items-center space-x-2">
             <span className="text-xs text-slate-400 font-medium shrink-0">Year:</span>
             <select
-              value={yearFilter}
-              onChange={(e) => setYearFilter(Number(e.target.value))}
+              value={yearFilter || ''}
+              onChange={(e) => setYearFilter(e.target.value ? Number(e.target.value) : undefined)}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
             >
+              <option value="">All Editions / Years</option>
               {[2024, 2025, 2026, 2027, 2028].map((y) => (
                 <option key={y} value={y}>
                   Edition {y}

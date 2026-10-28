@@ -70,11 +70,14 @@ def format_task_out(task) -> FestivalTaskOut:
         updated_at=task.updated_at
     )
 
-def format_festival_out(fest) -> FestivalOut:
+def format_festival_out(fest, target_year: Optional[int] = None) -> FestivalOut:
     """Helper to populate upcoming edition dates and counts for list view."""
-    # Find upcoming or latest year date
-    sorted_dates = sorted(fest.year_dates, key=lambda yd: yd.year, reverse=True)
-    latest_yd = sorted_dates[0] if sorted_dates else None
+    latest_yd = None
+    if target_year:
+        latest_yd = next((yd for yd in fest.year_dates if yd.year == target_year), None)
+    if not latest_yd:
+        sorted_dates = sorted(fest.year_dates, key=lambda yd: yd.year, reverse=True)
+        latest_yd = sorted_dates[0] if sorted_dates else None
 
     # Calculate task completion percentage
     total_tasks = len(fest.tasks)
@@ -128,7 +131,7 @@ def list_festivals(
         search=search,
         year=year
     )
-    return [format_festival_out(f) for f in festivals]
+    return [format_festival_out(f, target_year=year) for f in festivals]
 
 @router.get("/countries")
 def get_supported_countries(

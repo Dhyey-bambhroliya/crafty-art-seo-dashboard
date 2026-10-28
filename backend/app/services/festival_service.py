@@ -167,9 +167,9 @@ def list_festivals(
     festivals = query.order_by(Festival.name).all()
 
     # If specific year filter is requested, filter or sort by that year
+    # Include festivals that have dates for that year OR festivals with no year dates yet
     if year:
-        # Include festivals that have dates for that year
-        festivals = [f for f in festivals if any(yd.year == year for yd in f.year_dates)]
+        festivals = [f for f in festivals if not f.year_dates or any(yd.year == year for yd in f.year_dates)]
 
     return festivals
 
@@ -202,19 +202,26 @@ def create_festival(db: Session, fest_in: FestivalCreate, current_user: User) ->
                 detail=f"Assigned leader with ID {assigned_id} does not exist or is inactive."
             )
 
+    norm_country = (fest_in.country_code or "IN").strip().upper()
+    if norm_country == "UK":
+        norm_country = "GB"
+
     slug = fest_in.slug or generate_slug(fest_in.name)
 
     # Check for existing festival slug
     existing = db.query(Festival).filter(Festival.slug == slug).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A festival with slug '{slug}' already exists."
-        )
-
-    norm_country = (fest_in.country_code or "IN").strip().upper()
-    if norm_country == "UK":
-        norm_country = "GB"
+        # If the same slug exists for another country, disambiguate with country code
+        if existing.country_code != norm_country and not fest_in.slug:
+            candidate_slug = f"{slug}-{norm_country.lower()}"
+            if not db.query(Festival).filter(Festival.slug == candidate_slug).first():
+                slug = candidate_slug
+                existing = None
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A festival with slug '{slug}' already exists."
+            )
 
     festival = Festival(
         name=fest_in.name.strip(),

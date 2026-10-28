@@ -1,6 +1,6 @@
 from datetime import date, datetime
-from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Union, Any
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 # ----------------- FESTIVAL YEAR DATES -----------------
 class FestivalYearDateBase(BaseModel):
@@ -160,6 +160,36 @@ class FestivalBase(BaseModel):
 class FestivalCreate(FestivalBase):
     slug: Optional[str] = None
     initial_year_date: Optional[FestivalYearDateCreate] = None
+    initial_year: Optional[int] = None
+    start_date: Optional[Union[date, str]] = None
+    end_date: Optional[Union[date, str]] = None
+    date_status: Optional[str] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def assemble_initial_year_date(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # If flat fields provided from form but initial_year_date is missing, construct it
+            start_val = data.get("start_date")
+            yr_val = data.get("initial_year")
+            if not data.get("initial_year_date") and (start_val or yr_val):
+                if start_val:
+                    end_val = data.get("end_date") or start_val
+                    parsed_yr = yr_val
+                    if not parsed_yr and isinstance(start_val, str) and len(start_val) >= 4:
+                        try:
+                            parsed_yr = int(start_val[:4])
+                        except ValueError:
+                            parsed_yr = datetime.now().year
+                    elif not parsed_yr:
+                        parsed_yr = datetime.now().year
+                    data["initial_year_date"] = {
+                        "year": parsed_yr,
+                        "start_date": start_val,
+                        "end_date": end_val,
+                        "date_status": data.get("date_status") or "ESTIMATED"
+                    }
+        return data
 
 class FestivalUpdate(BaseModel):
     name: Optional[str] = None

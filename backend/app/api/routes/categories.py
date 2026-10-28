@@ -32,7 +32,7 @@ def list_categories(
     List all categories with leader info and page counts.
     Accessible to both Manager and Team Leader (read-only for all categories).
     """
-    query = db.query(Category).join(User, Category.assigned_leader_id == User.id)
+    query = db.query(Category).outerjoin(User, Category.assigned_leader_id == User.id)
 
     if leader_id is not None:
         query = query.filter(Category.assigned_leader_id == leader_id)

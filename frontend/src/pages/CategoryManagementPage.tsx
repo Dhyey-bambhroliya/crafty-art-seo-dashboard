@@ -67,12 +67,18 @@ export const CategoryManagementPage: React.FC = () => {
     setActionLoading(true);
 
     try {
+      const assignedId = isManager ? catLeaderId : (user?.id || 1);
       await api.createCategory({
         name: catName,
         description: catDesc || undefined,
-        assigned_leader_id: isManager ? catLeaderId : (user?.id || 1),
+        assigned_leader_id: assignedId,
       });
       setIsCreateOpen(false);
+      // Reset filter so newly created category appears immediately
+      setSearch('');
+      if (leaderFilter && leaderFilter !== assignedId) {
+        setLeaderFilter(undefined);
+      }
       loadData();
     } catch (err: any) {
       setFormError(err.message || 'Failed to create category.');
