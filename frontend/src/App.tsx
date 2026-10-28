@@ -14,6 +14,9 @@ import { TeamManagementPage } from './pages/TeamManagementPage';
 import { GSCConnectionPage } from './pages/GSCConnectionPage';
 import { SyncHistoryPage } from './pages/SyncHistoryPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { FestivalDashboardPage } from './pages/FestivalDashboardPage';
+import { FestivalDetailPage } from './pages/FestivalDetailPage';
+import { FestivalTasksPage } from './pages/FestivalTasksPage';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode; managerOnly?: boolean }> = ({
@@ -75,6 +78,9 @@ export function App() {
             />
             <Route path="/gsc-connection" element={<GSCConnectionPage />} />
             <Route path="/sync-history" element={<SyncHistoryPage />} />
+            <Route path="/festivals" element={<FestivalDashboardPage />} />
+            <Route path="/festivals/tasks" element={<FestivalTasksPage />} />
+            <Route path="/festivals/:id" element={<FestivalDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
 

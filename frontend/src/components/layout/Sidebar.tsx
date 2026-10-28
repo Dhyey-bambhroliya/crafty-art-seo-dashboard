@@ -18,11 +18,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
 
   const navItems = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/festivals', label: 'Festival SEO', icon: Sparkles },
     { to: '/categories', label: 'Categories', icon: FolderTree },
     { to: '/pages', label: 'Pages Monitoring', icon: FileText },
     { to: '/alerts', label: 'SEO Alerts', icon: Bell },
-    ...(isManager ? [{ to: '/team', label: 'Team Leaders', icon: Users }] : []),
     { to: '/gsc-connection', label: 'GSC Property', icon: Globe },
+    ...(isManager ? [{ to: '/team', label: 'Team Leaders', icon: Users }] : []),
     { to: '/sync-history', label: 'Sync History', icon: History },
     { to: '/settings', label: 'Settings', icon: Settings },
   ];

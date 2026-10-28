@@ -37,6 +37,53 @@ def get_masked_db_url(url: str = normalized_database_url) -> str:
         # Fallback if URL parsing fails on abnormal characters
         return "<masked-database-url>"
 
+def validate_database_safety(url: str = normalized_database_url) -> None:
+    """
+    Development Safety Guard:
+    Strictly prevents local development or automated tests from connecting to
+    the live production Supabase PostgreSQL instance under ANY circumstances.
+
+    Guarantees:
+    1. Automated tests cannot connect to anything other than an in-memory or SQLite database.
+    2. Local workstations (Windows / developer machines) can NEVER connect to production Supabase,
+       even if RENDER=true, ALLOW_PRODUCTION_DB_ACCESS=true, or any inherited environment variables are passed.
+    3. Production Supabase is only accessible when running inside an authenticated production Linux container.
+    """
+    import os
+    lower_url = (url or "").lower()
+    is_supabase = "supabase.co" in lower_url or "supabase.com" in lower_url or "pooler.supabase" in lower_url
+
+    # Rule 1: Automated test runner must strictly use SQLite
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        if not lower_url.startswith("sqlite"):
+            raise RuntimeError(
+                f"SAFETY GUARD: Automated test runner cannot connect to non-SQLite database '{get_masked_db_url(url)}'."
+            )
+        return
+
+    if is_supabase:
+        # Rule 2: On local development workstations (such as Windows), production Supabase is UNCONDITIONALLY BLOCKED.
+        # Inherited or accidentally set RENDER=true or ALLOW_PRODUCTION_DB_ACCESS=true will NOT bypass this guard.
+        if os.name == "nt":
+            raise RuntimeError(
+                "CRITICAL SAFETY VIOLATION BLOCKED: Direct connection to production Supabase PostgreSQL "
+                "is strictly forbidden on local development workstations regardless of any environment variables. "
+                "Local development must use an isolated SQLite database (e.g. 'crafty_art_seo_dev.db')."
+            )
+
+        # Rule 3: For Linux production environments (Render container), require verified cloud environment
+        is_render = os.getenv("RENDER", "").lower() == "true" or os.getenv("RENDER_SERVICE_ID") is not None
+        is_cloud_prod = os.getenv("ENVIRONMENT", "").lower() == "production" or is_render
+        if not is_cloud_prod:
+            raise RuntimeError(
+                "CRITICAL SAFETY VIOLATION BLOCKED: Attempted to connect to production Supabase PostgreSQL "
+                "outside a verified production cloud environment. Cloud deployments must run natively on Render "
+                "(where RENDER=true is set automatically) or set ENVIRONMENT=production in the container environment."
+            )
+
+# Execute safety guard check prior to creating engine
+validate_database_safety(normalized_database_url)
+
 engine_kwargs = {}
 if normalized_database_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}

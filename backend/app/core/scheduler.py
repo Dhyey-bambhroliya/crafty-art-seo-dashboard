@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
+from typing import Optional, Dict, Any, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from backend.app.core.config import settings
@@ -61,6 +62,12 @@ def daily_scheduled_sync_job():
     finally:
         db.close()
 
+    # Safely trigger festival reminders in an isolated try-except block
+    try:
+        run_festival_reminders()
+    except Exception as e:
+        logger.warning(f"Could not execute festival reminders in daily sync job: {str(e)}")
+
 def check_and_run_due_syncs(force: bool = False):
     """
     Checks if active properties need daily synchronization.
@@ -112,7 +119,62 @@ def check_and_run_due_syncs(force: bool = False):
                     logger.error(f"Auto-sync failed for {prop.site_url}: {str(e)}")
     finally:
         db.close()
+
+    # Safely trigger festival reminders in an isolated try-except block
+    try:
+        run_festival_reminders()
+    except Exception as e:
+        logger.warning(f"Could not execute festival reminders in check_and_run_due_syncs: {str(e)}")
+
     return results
+
+def run_festival_reminders(db: Optional[Any] = None, target_date: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Safely executes daily festival reminder generations:
+    1. 30/15/7-day milestone reminders for approved festival editions
+    2. Overdue task reminders for pending tasks past their due date
+
+    Guarantees:
+    - Completely isolated execution (errors will never disrupt GSC sync).
+    - Idempotent via internal dedup_keys (safe to call repeatedly without duplicates).
+    - Uses independent DB session if none is provided.
+    """
+    logger.info("Executing festival milestone and overdue task reminder check...")
+    from backend.app.services.festival_notification_service import (
+        generate_festival_milestone_reminders,
+        generate_overdue_task_reminders
+    )
+
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+
+    stats = {
+        "milestone_reminders": 0,
+        "overdue_task_reminders": 0,
+        "status": "SUCCESS"
+    }
+    try:
+        m_res = generate_festival_milestone_reminders(db=db, target_date=target_date, offsets=[30, 15, 7])
+        stats["milestone_reminders"] = m_res.get("created_reminders", 0)
+
+        t_res = generate_overdue_task_reminders(db=db, target_date=target_date)
+        stats["overdue_task_reminders"] = t_res.get("created_overdue_reminders", 0)
+
+        logger.info(
+            f"Festival reminders completed: {stats['milestone_reminders']} milestone, "
+            f"{stats['overdue_task_reminders']} overdue task notification(s) generated."
+        )
+    except Exception as e:
+        logger.error(f"Error generating festival reminders: {str(e)}")
+        stats["status"] = "FAILED"
+        stats["error"] = str(e)
+    finally:
+        if close_db:
+            db.close()
+
+    return stats
 
 def start_scheduler():
     """Initializes and starts the background daily sync scheduler if enabled."""
@@ -140,6 +202,15 @@ def start_scheduler():
             minutes=60,
             id="periodic_due_check",
             name="Periodic Overdue Sync Check",
+            replace_existing=True
+        )
+
+        # 3. Scheduled daily festival reminders
+        scheduler.add_job(
+            run_festival_reminders,
+            trigger=trigger,
+            id="daily_festival_reminders",
+            name="Daily Festival Milestone & Task Reminders",
             replace_existing=True
         )
 
