@@ -1,0 +1,197 @@
+name: Controlled Production Database Migration
+
+'on':
+  workflow_dispatch:
+    inputs:
+      confirmation_text:
+        description: 'Type "MIGRATE_PRODUCTION" to authorize executing migrations on production Supabase'
+        required: true
+        default: ''
+
+concurrency:
+  group: production-database-migration
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  production-migration:
+    name: Execute Controlled Supabase Migration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Manual Confirmation
+        env:
+          CONFIRMATION_INPUT: ${{ github.event.inputs.confirmation_text }}
+        run: |
+          if [ "$CONFIRMATION_INPUT" != "MIGRATE_PRODUCTION" ]; then
+            echo "::error::Migration aborted. Incorrect confirmation."
+            exit 1
+          fi
+          echo "Manual confirmation accepted: MIGRATE_PRODUCTION"
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Strict Production Pre-Flight Verification
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENVIRONMENT: production
+        run: |
+          python -c "
+          import os, sys
+          from sqlalchemy import create_engine, text, inspect
+          from backend.app.core.database import get_normalized_database_url, get_masked_db_url, validate_database_safety
+
+          raw_url = os.environ.get('DATABASE_URL', '').strip()
+          if not raw_url:
+              print('::error::DATABASE_URL secret is not configured!')
+              sys.exit(1)
+
+          norm_url = get_normalized_database_url(raw_url)
+          print(f'Connecting to verified target: {get_masked_db_url(norm_url)}')
+
+          # 1. Verify Database Safety Guard in Linux cloud environment
+          validate_database_safety(norm_url)
+          print('Safety Guard Check: PASSED (Authorized Linux Cloud Container)')
+
+          engine = create_engine(norm_url)
+          with engine.connect() as conn:
+              # 2. Verify project-specific identifiers (NOT just row counts)
+              db_name = conn.execute(text('SELECT current_database()')).scalar()
+              if db_name != 'postgres':
+                  print(f'::error::Unexpected database name: {db_name}. Expected postgres.')
+                  sys.exit(1)
+
+              # Verify specific Crafty Art GSC site_url
+              site_url = conn.execute(text('SELECT site_url FROM gsc_properties LIMIT 1')).scalar()
+              if not site_url or 'craftyart' not in site_url.lower():
+                  print(f'::error::Unexpected GSC site_url: {site_url}. Target is not Crafty Art production!')
+                  sys.exit(1)
+
+              # Verify specific manager account
+              manager_email = conn.execute(text(\"SELECT email FROM users WHERE role = 'MANAGER' LIMIT 1\")).scalar()
+              if not manager_email or 'craftyart' not in manager_email.lower():
+                  print(f'::error::Unexpected manager account: {manager_email}')
+                  sys.exit(1)
+
+              print(f'Project Identity Verified: {site_url} | Manager: {manager_email}')
+
+              # 3. Verify all 9 original application tables exist
+              inspector = inspect(conn)
+              existing_tables = set(inspector.get_table_names(schema='public'))
+              
+              expected_original_tables = {
+                  'users', 'categories', 'category_pages', 'daily_page_metrics',
+                  'gsc_properties', 'alerts', 'sync_runs', 'alert_settings', 'system_settings'
+              }
+              missing_originals = expected_original_tables - existing_tables
+              if missing_originals:
+                  print(f'::error::Missing expected baseline tables: {missing_originals}')
+                  sys.exit(1)
+              print('Original Application Tables: All 9 verified present.')
+
+              # 4. Verify system_settings schema compatibility with e4a0084b73f1
+              columns = {col['name'] for col in inspector.get_columns('system_settings', schema='public')}
+              expected_columns = {'key', 'value', 'updated_at'}
+              if not expected_columns.issubset(columns):
+                  print(f'::error::system_settings missing expected columns. Found: {columns}')
+                  sys.exit(1)
+              print('system_settings Structure: Verified compatible with baseline e4a0084b73f1.')
+
+              # 5. Check if already migrated or partially migrated
+              festival_tables = {
+                  'festivals', 'festival_year_dates', 'festival_subcategories',
+                  'festival_pages', 'festival_tasks', 'festival_notifications',
+                  'daily_page_country_metrics'
+              }
+              present_festival_tables = festival_tables.intersection(existing_tables)
+              if present_festival_tables:
+                  print(f'::error::ABORT: Database is already partially or fully migrated! Found tables: {present_festival_tables}')
+                  sys.exit(1)
+
+              # 6. Check alembic_version table status
+              if 'alembic_version' in existing_tables:
+                  cur_rev = conn.execute(text('SELECT version_num FROM alembic_version')).scalar()
+                  print(f'::error::ABORT: alembic_version table already exists with revision {cur_rev}. Cannot perform initial baseline stamping.')
+                  sys.exit(1)
+
+              print('Pre-Flight Status: READY FOR INITIAL BASELINE STAMP & MIGRATION.')
+          "
+
+      - name: Establish Alembic Baseline (e4a0084b73f1)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENVIRONMENT: production
+        run: |
+          echo "Establishing Alembic baseline revision e4a0084b73f1 ..."
+          python -m alembic stamp e4a0084b73f1
+
+      - name: Execute Festival SEO Migrations (a9714ee5d121 & b5c6d7e8f901)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENVIRONMENT: production
+        run: |
+          echo "Executing real Alembic migrations to HEAD ..."
+          python -m alembic upgrade head
+
+      - name: Post-Migration Comprehensive Verification
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENVIRONMENT: production
+        run: |
+          python -c "
+          import os, sys
+          from sqlalchemy import create_engine, text, inspect
+          from backend.app.core.database import get_normalized_database_url
+
+          norm_url = get_normalized_database_url(os.environ['DATABASE_URL'])
+          engine = create_engine(norm_url)
+          with engine.connect() as conn:
+              # 1. Verify final Alembic revision
+              rev = conn.execute(text('SELECT version_num FROM alembic_version')).scalar()
+              print(f'Alembic Final Revision: {rev}')
+              if rev != 'b5c6d7e8f901':
+                  print(f'::error::Migration failed: Expected b5c6d7e8f901 but found {rev}')
+                  sys.exit(1)
+
+              # 2. Verify all 7 new Festival tables exist
+              inspector = inspect(conn)
+              tables = set(inspector.get_table_names(schema='public'))
+
+              expected_new_tables = {
+                  'festivals', 'festival_year_dates', 'festival_subcategories',
+                  'festival_pages', 'festival_tasks', 'festival_notifications',
+                  'daily_page_country_metrics'
+              }
+              missing_new = expected_new_tables - tables
+              if missing_new:
+                  print(f'::error::Missing new festival tables: {missing_new}')
+                  sys.exit(1)
+              print('All 7 new Festival SEO tables verified present.')
+
+              # 3. Verify all 9 original tables remain intact
+              expected_original_tables = {
+                  'users', 'categories', 'category_pages', 'daily_page_metrics',
+                  'gsc_properties', 'alerts', 'sync_runs', 'alert_settings', 'system_settings'
+              }
+              missing_originals = expected_original_tables - tables
+              if missing_originals:
+                  print(f'::error::Original tables missing: {missing_originals}')
+                  sys.exit(1)
+              print('All 9 original application tables verified intact.')
+
+              print('SUCCESS: Production database migration completed and verified!')
+          "
+
