@@ -19,11 +19,16 @@ DEFAULT_TEAM_LEADER_PASSWORD = "12345678"
 
 def seed_team_leaders(db: Session) -> int:
     """
-    Ensures all 6 authorized Team Leaders exist in the database with role=TEAM_LEADER
-    and password set to '12345678'.
-    Runs automatically on application startup so it works seamlessly on Supabase & locally.
+    Ensures all 6 authorized Team Leaders exist in the database with role=TEAM_LEADER.
+    SAFE IDEMPOTENCY:
+    - If user does not exist, creates the account with initial default password.
+    - If user already exists:
+      * NEVER overwrites user's existing hashed_password with default password.
+      * NEVER alters user's existing role.
+      * NEVER resets user's existing is_active status (respects administrative deactivation).
+      * Only populates full_name if empty or generic placeholder.
     """
-    updated_or_created = 0
+    created_or_updated = 0
     hashed_pwd = hash_password(DEFAULT_TEAM_LEADER_PASSWORD)
 
     for leader in INITIAL_TEAM_LEADERS:
@@ -39,19 +44,19 @@ def seed_team_leaders(db: Session) -> int:
                 is_active=True
             )
             db.add(user)
-            updated_or_created += 1
+            created_or_updated += 1
             logger.info(f"Created Team Leader account: {email}")
         else:
-            # Update password to '12345678' and ensure team leader role & active status
-            user.hashed_password = hashed_pwd
-            user.role = UserRole.TEAM_LEADER
-            user.is_active = True
+            # SAFE: Preserve existing password, role, and active status.
+            # Never overwrite existing password with default password.
+            if not user.hashed_password:
+                user.hashed_password = hashed_pwd
+                created_or_updated += 1
             if not user.full_name or user.full_name.startswith("User"):
                 user.full_name = full_name
-            updated_or_created += 1
-            logger.info(f"Updated Team Leader credentials for: {email}")
+                created_or_updated += 1
 
-    # Ensure manager@craftyart.com also exists with password '12345678'
+    # Check for manager account safely
     manager = db.query(User).filter(User.email == "manager@craftyart.com").first()
     if not manager:
         existing_mgr = db.query(User).filter(User.role == UserRole.MANAGER).first()
@@ -64,11 +69,13 @@ def seed_team_leaders(db: Session) -> int:
                 is_active=True
             )
             db.add(manager)
-            updated_or_created += 1
+            created_or_updated += 1
             logger.info("Created default Manager account: manager@craftyart.com")
     else:
-        manager.hashed_password = hashed_pwd
-        logger.info("Updated Manager credentials for: manager@craftyart.com")
+        # SAFE: Preserve manager's existing password, role, and active status.
+        if not manager.hashed_password:
+            manager.hashed_password = hashed_pwd
+            created_or_updated += 1
 
     db.commit()
-    return updated_or_created
+    return created_or_updated

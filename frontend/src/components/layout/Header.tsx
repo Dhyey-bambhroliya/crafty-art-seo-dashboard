@@ -3,6 +3,7 @@ import { RefreshCw, Globe, Calendar, AlertCircle, Database, CheckCircle2 } from 
 import { api } from '../../services/api';
 import { GSCProperty } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { NotificationBell } from '../notifications/NotificationBell';
 
 interface HeaderProps {
   latestDataDate?: string;
@@ -102,6 +103,8 @@ export const Header: React.FC<HeaderProps> = ({
             <span>{syncMessage}</span>
           </span>
         )}
+
+        <NotificationBell />
 
         {isManager && (
           <button

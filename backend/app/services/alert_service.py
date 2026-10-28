@@ -33,7 +33,7 @@ def evaluate_page_alerts(
     """
     Evaluates all mapped active pages against configurable thresholds.
     Generates alerts while strictly deduplicating active/pending alerts.
-    Returns count of newly generated alerts.
+    Returns count of newly generated alerts                                     .
     """
     if not evaluation_date:
         evaluation_date = get_latest_data_date(db, property_id)

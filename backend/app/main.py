@@ -7,7 +7,7 @@ from backend.app.core.database import init_db
 from backend.app.core.scheduler import start_scheduler, shutdown_scheduler
 
 # Import routes
-from backend.app.api.routes import auth, users, categories, pages, dashboard, alerts, gsc
+from backend.app.api.routes import auth, users, categories, pages, dashboard, alerts, gsc, festivals, notifications
 
 # Configure structured logging
 logging.basicConfig(
@@ -87,6 +87,8 @@ app.include_router(pages.router, prefix=settings.API_V1_STR)
 app.include_router(dashboard.router, prefix=settings.API_V1_STR)
 app.include_router(alerts.router, prefix=settings.API_V1_STR)
 app.include_router(gsc.router, prefix=settings.API_V1_STR)
+app.include_router(festivals.router, prefix=settings.API_V1_STR)
+app.include_router(notifications.router, prefix=settings.API_V1_STR)
 
 if __name__ == "__main__":
     import uvicorn
