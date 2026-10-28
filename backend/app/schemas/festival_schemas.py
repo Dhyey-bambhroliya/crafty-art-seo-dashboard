@@ -71,12 +71,25 @@ class FestivalSubcategoryOut(FestivalSubcategoryBase):
 
 # ----------------- FESTIVAL LANDING PAGES -----------------
 class FestivalPageBase(BaseModel):
-    full_url: str = Field(..., min_length=5, max_length=1000)
+    full_url: Optional[str] = None
+    page_url: Optional[str] = None
     subcategory_id: Optional[int] = None
     page_title: Optional[str] = None
     priority: str = "PRIMARY"  # PRIMARY, SECONDARY, SUPPORTING
     status: str = "ACTIVE"  # ACTIVE, PAUSED, ARCHIVED
     notes: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_page_url(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            url = data.get("full_url") or data.get("page_url")
+            if url:
+                data["full_url"] = str(url).strip()
+                data["page_url"] = str(url).strip()
+        elif hasattr(data, "full_url"):
+            data.page_url = data.full_url
+        return data
 
 class FestivalPageCreate(FestivalPageBase):
     category_page_id: Optional[int] = None
@@ -93,11 +106,61 @@ class FestivalPageOut(FestivalPageBase):
 
     id: int
     festival_id: int
+    full_url: str
+    page_url: Optional[str] = None
     normalized_url: str
     subcategory_name: Optional[str] = None
     category_page_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    task_count: int = 0
+    completed_task_count: int = 0
+    seo_status: str = "NOT_STARTED"
+    assigned_leader_name: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_page_url(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            url = data.get("full_url") or data.get("page_url")
+            if url:
+                data["full_url"] = str(url).strip()
+                data["page_url"] = str(url).strip()
+        elif hasattr(data, "full_url"):
+            setattr(data, "page_url", getattr(data, "full_url"))
+        return data
+
+class FestivalBulkPagesRequest(BaseModel):
+    urls: List[str] = Field(default_factory=list)
+    urls_text: Optional[str] = None
+    subcategory_id: Optional[int] = None
+    priority: str = "PRIMARY"
+    notes: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_urls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            raw_urls = data.get("urls")
+            urls_text = data.get("urls_text")
+            extracted: List[str] = []
+            if isinstance(raw_urls, list):
+                extracted.extend([str(u).strip() for u in raw_urls if str(u).strip()])
+            if isinstance(urls_text, str) and urls_text.strip():
+                extracted.extend([line.strip() for line in urls_text.splitlines() if line.strip()])
+            data["urls"] = extracted
+        return data
+
+class FestivalBulkPagesResponse(BaseModel):
+    status: str
+    total_submitted: int
+    added_count: int
+    skipped_count: int
+    duplicate_count: int = 0
+    invalid_count: int = 0
+    added_pages: List[FestivalPageOut] = []
+    warnings: List[str] = []
+    errors: List[str] = []
 
 class FestivalPageDuplicateCheckResponse(BaseModel):
     normalized_url: str
@@ -112,6 +175,7 @@ class FestivalTaskBase(BaseModel):
     description: Optional[str] = None
     task_type: str = "CONTENT"  # CONTENT, META_TAGS, INTERNAL_LINKS, CREATIVES, TECHNICAL
     milestone_stage: str = "T_MINUS_30"  # T_MINUS_60, T_MINUS_30, T_MINUS_15, T_MINUS_7, EVENT_DAY, POST_FESTIVAL
+    status: str = "NOT_STARTED"
     due_date: Optional[date] = None
     landing_page_id: Optional[int] = None
     festival_year_date_id: Optional[int] = None
@@ -324,6 +388,7 @@ class FestivalYoYSummary(BaseModel):
     note: Optional[str] = None
 
 class FestivalPageComparison(BaseModel):
+    page_id: Optional[int] = None
     page_url: str
     normalized_url: str
     page_title: Optional[str] = None

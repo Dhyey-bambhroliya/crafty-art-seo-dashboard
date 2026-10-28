@@ -1,7 +1,8 @@
 import {
   Festival, FestivalYearDate, FestivalSubcategory, FestivalPage,
   FestivalTask, FestivalNotification, SuggestedFestival,
-  FestivalSeasonComparisonResponse, AvailableHistoricalRangeResponse
+  FestivalSeasonComparisonResponse, AvailableHistoricalRangeResponse,
+  FestivalBulkPagesResponse
 } from '../types/festival';
 
 const API_ORIGIN = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
@@ -144,6 +145,16 @@ class FestivalApiClient {
 
   async mapFestivalPage(festival_id: number, data: any): Promise<FestivalPage> {
     return this.request<FestivalPage>(`/festivals/${festival_id}/pages`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async bulkMapFestivalPages(
+    festival_id: number,
+    data: { urls: string[]; subcategory_id?: number | null; priority?: string }
+  ): Promise<FestivalBulkPagesResponse> {
+    return this.request<FestivalBulkPagesResponse>(`/festivals/${festival_id}/pages/bulk`, {
       method: 'POST',
       body: JSON.stringify(data),
     });

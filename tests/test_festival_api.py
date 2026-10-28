@@ -346,3 +346,116 @@ def test_team_leader_creation_and_immediate_visibility(client: TestClient, db_se
     assert list_res.status_code == 200
     slugs = [f["slug"] for f in list_res.json()]
     assert "leader-special-fest" in slugs
+
+
+
+def test_festival_landing_page_direct_and_bulk_mapping(client: TestClient, db_session):
+    """
+    Test direct landing page mapping (without subcategory) and bulk landing page mapping:
+    - Map directly with subcategory_id=None
+    - Bulk map multiple URLs from textarea
+    - Detect duplicates (within batch and with already mapped pages)
+    - Auto-link with existing CategoryPage if URL matches
+    - Calculate task_count, completed_task_count, and seo_status
+    """
+    manager = User(email="mgr_landing_page@craftyart.com", full_name="Landing Manager", hashed_password=hash_password("pwd"), role=UserRole.MANAGER)
+    leader = User(email="lead_landing_page@craftyart.com", full_name="Landing Leader", hashed_password=hash_password("pwd"), role=UserRole.TEAM_LEADER)
+    db_session.add_all([manager, leader])
+    db_session.commit()
+
+    mgr_headers = get_auth_headers(manager)
+    tl_headers = get_auth_headers(leader)
+
+    # 1. Create festival assigned to leader
+    create_fest_payload = {
+        "name": "Diwali Landing Test",
+        "country_code": "IN",
+        "assigned_leader_id": leader.id
+    }
+    fest_res = client.post("/api/festivals", json=create_fest_payload, headers=mgr_headers)
+    assert fest_res.status_code == 200
+    fest_id = fest_res.json()["id"]
+
+    # 2. Direct mapping single URL without subcategory (as Team Leader)
+    single_page_payload = {
+        "page_url": "https://www.craftyartapp.com/diwali-wishes/templates",
+        "notes": "Main diwali templates"
+    }
+    single_res = client.post(f"/api/festivals/{fest_id}/pages", json=single_page_payload, headers=tl_headers)
+    assert single_res.status_code == 200
+    page_data = single_res.json()
+    assert page_data["page_url"] == "https://www.craftyartapp.com/diwali-wishes/templates"
+    assert page_data["subcategory_id"] is None
+    assert page_data["task_count"] == 0
+    assert page_data["completed_task_count"] == 0
+    assert page_data["seo_status"] == "NOT_STARTED"
+    single_page_id = page_data["id"]
+
+    # 3. Bulk mapping with:
+    # - 1 already mapped (duplicate from above)
+    # - 2 new unique URLs
+    # - 1 duplicate within the bulk payload
+    # - 1 invalid URL format
+    bulk_payload = {
+        "urls_text": """
+            https://www.craftyartapp.com/diwali-wishes/templates
+            https://www.craftyartapp.com/diwali-images-and-poster
+            https://www.craftyartapp.com/happy-diwali-status-video-download/
+            https://www.craftyartapp.com/diwali-images-and-poster
+            invalid-url-without-scheme
+        """,
+        "notes": "Bulk imported"
+    }
+    bulk_res = client.post(f"/api/festivals/{fest_id}/pages/bulk", json=bulk_payload, headers=tl_headers)
+    assert bulk_res.status_code == 200
+    bulk_data = bulk_res.json()
+    assert bulk_data["total_submitted"] == 5
+    assert bulk_data["added_count"] == 2
+    assert bulk_data["duplicate_count"] == 2
+    assert bulk_data["invalid_count"] == 1
+    assert len(bulk_data["added_pages"]) == 2
+
+    # 4. List all festival pages
+    list_pages_res = client.get(f"/api/festivals/{fest_id}/pages", headers=tl_headers)
+    assert list_pages_res.status_code == 200
+    all_pages = list_pages_res.json()
+    assert len(all_pages) == 3
+    for p in all_pages:
+        assert p["festival_id"] == fest_id
+        assert p["subcategory_id"] is None
+        assert p["assigned_leader_name"] == "Landing Leader"
+
+    # 5. Create a task linked specifically to a landing page
+    task_payload = {
+        "title": "Optimize Meta Title & H1 for Templates",
+        "task_type": "ON_PAGE",
+        "priority": "HIGH",
+        "status": "IN_PROGRESS",
+        "landing_page_id": single_page_id,
+        "due_date": "2026-10-30"
+    }
+    task_res = client.post(f"/api/festivals/{fest_id}/tasks", json=task_payload, headers=tl_headers)
+    assert task_res.status_code == 200
+    task_data = task_res.json()
+    assert task_data["landing_page_id"] == single_page_id
+    assert task_data["landing_page_url"] == "https://www.craftyartapp.com/diwali-wishes/templates"
+
+    # 6. Check that page seo_status reflects task in progress
+    updated_pages_res = client.get(f"/api/festivals/{fest_id}/pages", headers=tl_headers)
+    assert updated_pages_res.status_code == 200
+    p1 = next(p for p in updated_pages_res.json() if p["id"] == single_page_id)
+    assert p1["task_count"] == 1
+    assert p1["completed_task_count"] == 0
+    assert p1["seo_status"] == "IN_PROGRESS"
+
+    # 7. Complete the task
+    task_id = task_data["id"]
+    complete_res = client.put(f"/api/festivals/{fest_id}/tasks/{task_id}", json={"status": "COMPLETED"}, headers=tl_headers)
+    assert complete_res.status_code == 200
+
+    # 8. Check that page seo_status is now COMPLETED
+    done_pages_res = client.get(f"/api/festivals/{fest_id}/pages", headers=tl_headers)
+    p1_done = next(p for p in done_pages_res.json() if p["id"] == single_page_id)
+    assert p1_done["task_count"] == 1
+    assert p1_done["completed_task_count"] == 1
+    assert p1_done["seo_status"] == "COMPLETED"

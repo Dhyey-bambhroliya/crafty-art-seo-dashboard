@@ -9,7 +9,7 @@ from backend.app.schemas.festival_schemas import (
     FestivalYearDateCreate, FestivalYearDateUpdate, FestivalYearDateOut,
     FestivalDateApprovalRequest, SuggestedFestivalOut, ApplySuggestionsRequest,
     ApplySuggestionsResponse, FestivalSubcategoryCreate, FestivalSubcategoryOut,
-    FestivalPageCreate, FestivalPageOut, FestivalSeasonComparisonResponse,
+    FestivalPageCreate, FestivalPageOut, FestivalBulkPagesRequest, FestivalBulkPagesResponse, FestivalSeasonComparisonResponse,
     FestivalPageComparison, RelativeDailyTrendPoint, AvailableHistoricalRangeResponse,
     FestivalTaskCreate, FestivalTaskUpdate, FestivalTaskStatusUpdate, FestivalTaskOut
 )
@@ -31,6 +31,7 @@ from backend.app.services.festival_service import (
     map_festival_landing_page,
     list_festival_landing_pages,
     delete_festival_landing_page,
+    bulk_map_festival_landing_pages,
     create_festival_task,
     list_festival_tasks,
     update_festival_task,
@@ -81,7 +82,7 @@ def format_festival_out(fest, target_year: Optional[int] = None) -> FestivalOut:
 
     # Calculate task completion percentage
     total_tasks = len(fest.tasks)
-    completed_tasks = sum(1 for t in fest.tasks if t.status == "COMPLETED")
+    completed_tasks = sum(1 for t in fest.tasks if t.status in ("COMPLETED", "DONE"))
     pct = (completed_tasks / total_tasks * 100.0) if total_tasks > 0 else 0.0
 
     return FestivalOut(
@@ -358,6 +359,47 @@ def create_subcategory(
     subcat = create_festival_subcategory(db, festival_id, subcat_in, current_user)
     return FestivalSubcategoryOut.model_validate(subcat)
 
+def format_festival_page_out(page) -> FestivalPageOut:
+    """Helper to populate task counts and SEO status on festival page response."""
+    total_tasks = len(page.tasks) if page.tasks else 0
+    completed = sum(1 for t in page.tasks if t.status in ("COMPLETED", "DONE")) if page.tasks else 0
+    in_prog = sum(1 for t in page.tasks if t.status in ("IN_PROGRESS", "READY_FOR_REVIEW")) if page.tasks else 0
+
+    if total_tasks == 0:
+        seo_status = "NOT_STARTED"
+    elif completed == total_tasks:
+        seo_status = "COMPLETED"
+    elif in_prog > 0 or completed > 0:
+        seo_status = "IN_PROGRESS"
+    else:
+        seo_status = "NOT_STARTED"
+
+    leader_name = (
+        page.festival.assigned_leader.full_name
+        if page.festival and page.festival.assigned_leader
+        else "Unassigned"
+    )
+
+    return FestivalPageOut(
+        id=page.id,
+        festival_id=page.festival_id,
+        full_url=page.full_url,
+        normalized_url=page.normalized_url,
+        subcategory_id=page.subcategory_id,
+        subcategory_name=page.subcategory.name if page.subcategory else None,
+        category_page_id=page.category_page_id,
+        page_title=page.page_title,
+        priority=page.priority,
+        status=page.status,
+        notes=page.notes,
+        created_at=page.created_at,
+        updated_at=page.updated_at,
+        task_count=total_tasks,
+        completed_task_count=completed,
+        seo_status=seo_status,
+        assigned_leader_name=leader_name
+    )
+
 @router.get("/{festival_id}/pages", response_model=List[FestivalPageOut])
 def get_festival_pages(
     festival_id: int,
@@ -366,7 +408,7 @@ def get_festival_pages(
 ):
     """List mapped landing pages for a festival."""
     pages = list_festival_landing_pages(db, festival_id, current_user)
-    return [FestivalPageOut.model_validate(p) for p in pages]
+    return [format_festival_page_out(p) for p in pages]
 
 @router.post("/{festival_id}/pages", response_model=FestivalPageOut)
 def map_page(
@@ -375,9 +417,19 @@ def map_page(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_team_leader_or_manager)
 ):
-    """Map a landing page URL to a festival (deduplicating URLs)."""
+    """Map a landing page URL directly to a festival (deduplicating URLs)."""
     page = map_festival_landing_page(db, festival_id, page_in, current_user)
-    return FestivalPageOut.model_validate(page)
+    return format_festival_page_out(page)
+
+@router.post("/{festival_id}/pages/bulk", response_model=FestivalBulkPagesResponse)
+def map_pages_bulk(
+    festival_id: int,
+    request: FestivalBulkPagesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_team_leader_or_manager)
+):
+    """Bulk map landing pages directly to a festival with duplicate detection and validation."""
+    return bulk_map_festival_landing_pages(db, festival_id, request, current_user)
 
 @router.delete("/{festival_id}/pages/{page_id}")
 def delete_page(

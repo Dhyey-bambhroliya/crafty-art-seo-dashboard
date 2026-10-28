@@ -42,6 +42,7 @@ export interface FestivalPage {
   id: number;
   festival_id: number;
   subcategory_id?: number | null;
+  subcategory_name?: string | null;
   category_page_id?: number | null;
   full_url: string;
   normalized_url: string;
@@ -51,6 +52,26 @@ export interface FestivalPage {
   notes?: string | null;
   created_at: string;
   updated_at: string;
+  task_count?: number;
+  completed_task_count?: number;
+  seo_status?: string;
+  assigned_leader_name?: string | null;
+}
+
+export interface FestivalBulkPagesRequest {
+  urls: string[];
+  subcategory_id?: number | null;
+  priority?: PagePriority;
+}
+
+export interface FestivalBulkPagesResponse {
+  status: string;
+  total_submitted: number;
+  added_count: number;
+  skipped_count: number;
+  added_pages: FestivalPage[];
+  warnings: string[];
+  errors: string[];
 }
 
 export interface FestivalTask {
@@ -184,6 +205,7 @@ export interface FestivalYoYSummary {
 }
 
 export interface FestivalPageComparison {
+  page_id?: number | null;
   page_url: string;
   normalized_url: string;
   page_title?: string | null;

@@ -407,6 +407,7 @@ def compare_festival_seasons(
             ))
 
         landing_pages.append(FestivalPageComparison(
+            page_id=page_model.id,
             page_url=page_model.full_url,
             normalized_url=u,
             page_title=page_model.page_title,

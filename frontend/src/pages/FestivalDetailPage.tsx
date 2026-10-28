@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Sparkles, ArrowLeft, Calendar, Plus, ExternalLink, Trash2, Edit2,
   CheckCircle, AlertTriangle, Clock, Check, X, Shield, User, Globe,
   Layers, CheckSquare, BarChart3, TrendingUp, TrendingDown,
-  MousePointer, Eye, Percent, Target, AlertCircle, RefreshCw
+  MousePointer, Eye, Percent, Target, AlertCircle, RefreshCw,
+  Search, FolderPlus, ListPlus, Copy
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
@@ -14,7 +15,8 @@ import { festivalApi } from '../services/festivalApi';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import {
-  Festival, FestivalYearDate, FestivalSeasonComparisonResponse
+  Festival, FestivalYearDate, FestivalSeasonComparisonResponse,
+  FestivalBulkPagesResponse, FestivalPageComparison
 } from '../types/festival';
 import { User as UserType } from '../types';
 
@@ -48,8 +50,8 @@ export const FestivalDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Active Tab: 'editions' | 'subcategories' | 'tasks' | 'analytics'
-  const [activeTab, setActiveTab] = useState<'editions' | 'subcategories' | 'tasks' | 'analytics'>('analytics');
+  // Active Tab: 'pages' | 'tasks' | 'gsc' | 'yoy' | 'editions'
+  const [activeTab, setActiveTab] = useState<'pages' | 'tasks' | 'gsc' | 'yoy' | 'editions'>('pages');
 
   // ----------------- MODAL STATES -----------------
   // Edit Festival Modal
@@ -84,12 +86,20 @@ export const FestivalDetailPage: React.FC = () => {
   const [subcatPriority, setSubcatPriority] = useState<'HIGH' | 'MEDIUM' | 'LOW'>('HIGH');
   const [subcatSubmitting, setSubcatSubmitting] = useState(false);
 
-  // Map Landing Page Modal
+  // Bulk Add Landing Pages Modal
+  const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
+  const [bulkUrlsText, setBulkUrlsText] = useState('');
+  const [bulkSubcatId, setBulkSubcatId] = useState<number | undefined>(undefined);
+  const [bulkPriority, setBulkPriority] = useState<'PRIMARY' | 'SECONDARY' | 'SUPPORTING'>('PRIMARY');
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkResult, setBulkResult] = useState<FestivalBulkPagesResponse | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  // Single Map Landing Page Modal
   const [isMapPageOpen, setIsMapPageOpen] = useState(false);
   const [mapSubcatId, setMapSubcatId] = useState<number | undefined>(undefined);
   const [mapFullUrl, setMapFullUrl] = useState('');
-  const [mapCountry, setMapCountry] = useState('ALL');
-  const [mapPriority, setMapPriority] = useState<'HIGH' | 'MEDIUM' | 'LOW'>('HIGH');
+  const [mapPriority, setMapPriority] = useState<'PRIMARY' | 'SECONDARY' | 'SUPPORTING'>('PRIMARY');
   const [mapSubmitting, setMapSubmitting] = useState(false);
 
   // Task Modal
@@ -103,7 +113,12 @@ export const FestivalDetailPage: React.FC = () => {
   const [taskPageId, setTaskPageId] = useState<number | undefined>(undefined);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
 
-  // ----------------- ANALYTICS STATE (Task 5) -----------------
+  // Filters
+  const [pageSearchTerm, setPageSearchTerm] = useState('');
+  const [pageSubcatFilter, setPageSubcatFilter] = useState('ALL');
+  const [taskPageFilter, setTaskPageFilter] = useState('ALL');
+
+  // ----------------- ANALYTICS STATE -----------------
   const [analyticsCurrentYear, setAnalyticsCurrentYear] = useState<number>(new Date().getFullYear());
   const [analyticsPrevYear, setAnalyticsPrevYear] = useState<number>(new Date().getFullYear() - 1);
   const [analyticsCountry, setAnalyticsCountry] = useState<string>('ALL');
@@ -111,7 +126,6 @@ export const FestivalDetailPage: React.FC = () => {
   const [comparisonData, setComparisonData] = useState<FestivalSeasonComparisonResponse | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
-  const [pageSearchTerm, setPageSearchTerm] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -122,13 +136,15 @@ export const FestivalDetailPage: React.FC = () => {
         isManager ? api.getLeaders() : Promise.resolve([]),
       ]);
       setFestival(festRes);
-      if (isManager) setLeaders(leadersRes);
+      if (isManager && leadersRes.length > 0) {
+        setLeaders(leadersRes);
+        setEditLeaderId(festRes.assigned_leader_id || leadersRes[0].id);
+      }
 
       // Prepopulate edit modal state
       setEditName(festRes.name);
       setEditRegion(festRes.region || '');
       setEditDescription(festRes.description || '');
-      setEditLeaderId(festRes.assigned_leader_id || 1);
 
       // Set initial analytics years from available year dates
       if (festRes.year_dates && festRes.year_dates.length > 0) {
@@ -174,10 +190,22 @@ export const FestivalDetailPage: React.FC = () => {
   }, [festivalId]);
 
   useEffect(() => {
-    if (festivalId && activeTab === 'analytics') {
+    if (festivalId && analyticsCurrentYear) {
       loadAnalytics();
     }
-  }, [festivalId, activeTab, analyticsCurrentYear, analyticsPrevYear, analyticsCountry]);
+  }, [festivalId, analyticsCurrentYear, analyticsPrevYear, analyticsCountry]);
+
+  // Fast GSC metric lookup by normalized URL
+  const metricsMap = useMemo(() => {
+    const map = new Map<string, FestivalPageComparison>();
+    if (comparisonData?.landing_pages) {
+      for (const lp of comparisonData.landing_pages) {
+        map.set(lp.normalized_url, lp);
+        map.set(lp.page_url, lp);
+      }
+    }
+    return map;
+  }, [comparisonData]);
 
   // ----------------- HANDLERS -----------------
   const handleUpdateFestival = async (e: React.FormEvent) => {
@@ -188,7 +216,7 @@ export const FestivalDetailPage: React.FC = () => {
         name: editName.trim(),
         region: editRegion.trim() || undefined,
         description: editDescription.trim() || undefined,
-        assigned_leader_id: editLeaderId,
+        assigned_leader_id: isManager ? editLeaderId : undefined,
       });
       setIsEditOpen(false);
       loadData();
@@ -200,7 +228,7 @@ export const FestivalDetailPage: React.FC = () => {
   };
 
   const handleDeleteFestival = async () => {
-    if (!window.confirm(`Are you sure you want to deactivate or remove festival "${festival?.name}"?`)) {
+    if (!window.confirm(`Are you sure you want to delete '${festival?.name}'? This cannot be undone.`)) {
       return;
     }
     try {
@@ -211,7 +239,7 @@ export const FestivalDetailPage: React.FC = () => {
     }
   };
 
-  const handleAddYearSubmit = async (e: React.FormEvent) => {
+  const handleAddYearDate = async (e: React.FormEvent) => {
     e.preventDefault();
     setYearSubmitting(true);
     try {
@@ -232,7 +260,7 @@ export const FestivalDetailPage: React.FC = () => {
     }
   };
 
-  const handleApproveSubmit = async (e: React.FormEvent) => {
+  const handleApproveYearDate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!approvingYear) return;
     setApprovalSubmitting(true);
@@ -252,7 +280,7 @@ export const FestivalDetailPage: React.FC = () => {
     }
   };
 
-  const handleAddSubcategory = async (e: React.FormEvent) => {
+  const handleAddSubcat = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubcatSubmitting(true);
     try {
@@ -260,7 +288,6 @@ export const FestivalDetailPage: React.FC = () => {
         name: subcatName.trim(),
         slug: subcatSlug.trim() || undefined,
         description: subcatDesc.trim() || undefined,
-        priority: subcatPriority,
       });
       setIsAddSubcatOpen(false);
       setSubcatName('');
@@ -274,6 +301,49 @@ export const FestivalDetailPage: React.FC = () => {
     }
   };
 
+  // Bulk Landing Pages Handler
+  const handleBulkAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBulkError(null);
+    setBulkResult(null);
+
+    const lines = bulkUrlsText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      setBulkError('Please enter at least one URL.');
+      return;
+    }
+
+    setBulkSubmitting(true);
+    try {
+      const res = await festivalApi.bulkMapFestivalPages(festivalId, {
+        urls: lines,
+        subcategory_id: bulkSubcatId || undefined,
+        priority: bulkPriority,
+      });
+      setBulkResult(res);
+      if (res.added_count > 0) {
+        loadData();
+        loadAnalytics();
+      }
+      if (res.errors.length === 0 && res.warnings.length === 0) {
+        setTimeout(() => {
+          setIsBulkAddOpen(false);
+          setBulkUrlsText('');
+          setBulkResult(null);
+        }, 1200);
+      }
+    } catch (err: any) {
+      setBulkError(err.message || 'Failed to bulk add landing pages.');
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
+  // Single Page Map Handler
   const handleMapPage = async (e: React.FormEvent) => {
     e.preventDefault();
     setMapSubmitting(true);
@@ -281,12 +351,12 @@ export const FestivalDetailPage: React.FC = () => {
       await festivalApi.mapFestivalPage(festivalId, {
         full_url: mapFullUrl.trim(),
         subcategory_id: mapSubcatId || undefined,
-        target_country: mapCountry !== 'ALL' ? mapCountry : undefined,
         priority: mapPriority,
       });
       setIsMapPageOpen(false);
       setMapFullUrl('');
       loadData();
+      loadAnalytics();
     } catch (err: any) {
       alert(err.message || 'Failed to map landing page.');
     } finally {
@@ -301,6 +371,7 @@ export const FestivalDetailPage: React.FC = () => {
     try {
       await festivalApi.deleteFestivalPage(festivalId, pageId);
       loadData();
+      loadAnalytics();
     } catch (err: any) {
       alert(err.message || 'Failed to unmap page.');
     }
@@ -323,6 +394,7 @@ export const FestivalDetailPage: React.FC = () => {
       setTaskTitle('');
       setTaskDesc('');
       setTaskDueDate('');
+      setTaskPageId(undefined);
       loadData();
     } catch (err: any) {
       alert(err.message || 'Failed to create task.');
@@ -341,7 +413,7 @@ export const FestivalDetailPage: React.FC = () => {
   };
 
   const handleDeleteTask = async (taskId: number) => {
-    if (!window.confirm('Delete this task?')) return;
+    if (!window.confirm('Delete this preparation task?')) return;
     try {
       await festivalApi.deleteFestivalTask(festivalId, taskId);
       loadData();
@@ -352,26 +424,24 @@ export const FestivalDetailPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="space-y-4 animate-pulse">
-        <div className="h-8 w-48 bg-slate-900 rounded-xl" />
-        <div className="h-32 bg-slate-900 rounded-2xl" />
-        <div className="h-64 bg-slate-900 rounded-2xl" />
+      <div className="flex items-center justify-center min-h-[500px]">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   if (error || !festival) {
     return (
-      <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-8 text-center max-w-xl mx-auto my-12">
+      <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-8 text-center max-w-lg mx-auto mt-12">
         <AlertCircle className="w-10 h-10 text-rose-400 mx-auto mb-3" />
-        <h2 className="text-base font-bold text-white">Festival Not Found or Access Denied</h2>
-        <p className="text-xs text-slate-400 mt-1">{error || 'You might not have permission to view this festival.'}</p>
+        <h3 className="text-base font-bold text-white">Error Loading Festival</h3>
+        <p className="text-xs text-slate-400 mt-1">{error || 'Festival not found'}</p>
         <Link
           to="/festivals"
-          className="mt-4 inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors"
+          className="inline-flex items-center space-x-1.5 mt-4 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to Festival Dashboard</span>
+          <span>Back to Festivals</span>
         </Link>
       </div>
     );
@@ -379,818 +449,491 @@ export const FestivalDetailPage: React.FC = () => {
 
   const countryName = COUNTRY_NAMES[festival.country_code] || festival.country_code;
   const flag = COUNTRY_FLAGS[festival.country_code] || '🌐';
-
-  // Subcategories & Pages grouping
+  const yearDates = festival.year_dates || [];
   const subcategories = festival.subcategories || [];
   const pages = festival.pages || [];
   const tasks = festival.tasks || [];
-  const yearDates = festival.year_dates || [];
+
+  // Sort year dates descending
+  const sortedDates = [...yearDates].sort((a, b) => b.year - a.year);
+  const latestDate = sortedDates[0];
+
+  // Calculate days remaining to latest start date
+  let daysRemaining: number | null = null;
+  if (latestDate?.start_date) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const fDate = new Date(latestDate.start_date);
+    daysRemaining = Math.ceil((fDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  }
+
+  // Filter landing pages by search and subcategory
+  const filteredPages = pages.filter((p) => {
+    if (pageSubcatFilter === 'DIRECT' && p.subcategory_id) return false;
+    if (pageSubcatFilter !== 'ALL' && pageSubcatFilter !== 'DIRECT') {
+      if (p.subcategory_id !== Number(pageSubcatFilter)) return false;
+    }
+    if (pageSearchTerm) {
+      const q = pageSearchTerm.toLowerCase();
+      return p.full_url.toLowerCase().includes(q) || (p.page_title && p.page_title.toLowerCase().includes(q));
+    }
+    return true;
+  });
+
+  const bulkLinesCount = bulkUrlsText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean).length;
 
   return (
     <div className="space-y-6">
-      {/* Breadcrumb Navigation */}
-      <div>
+      {/* Breadcrumb & Navigation */}
+      <div className="flex items-center justify-between">
         <Link
           to="/festivals"
-          className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-400 hover:text-white transition-colors mb-3"
+          className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
         >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to Festival Directory</span>
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Festivals</span>
         </Link>
 
-        {/* Festival Header Card */}
-        <div className="bg-slate-900/90 rounded-2xl p-6 border border-slate-800 shadow-xl shadow-black/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center space-x-2">
-              <span className="text-2xl">{flag}</span>
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                {countryName} {festival.region ? `• ${festival.region}` : ''} • {festival.category_group}
-              </span>
-            </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight mt-1 flex items-center space-x-2">
-              <span>{festival.name}</span>
-            </h1>
-            {festival.description && (
-              <p className="text-xs text-slate-400 mt-1 max-w-2xl">{festival.description}</p>
-            )}
+        {isManager && (
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setIsEditOpen(true)}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+            >
+              <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Edit Details</span>
+            </button>
+            <button
+              onClick={handleDeleteFestival}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
+            </button>
+          </div>
+        )}
+      </div>
 
-            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400 mt-3 pt-3 border-t border-slate-800/80">
-              <span className="flex items-center space-x-1.5">
-                <User className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Assigned Leader:</span>
-                <span className="text-slate-200 font-semibold">{festival.assigned_leader_name || 'Unassigned'}</span>
-              </span>
-
-              <span>•</span>
-
-              <span className="flex items-center space-x-1.5">
-                <Layers className="w-3.5 h-3.5 text-purple-400" />
-                <span className="text-slate-200 font-semibold">{subcategories.length}</span>
-                <span>Subcategories</span>
-              </span>
-
-              <span>•</span>
-
-              <span className="flex items-center space-x-1.5">
-                <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-slate-200 font-semibold">{pages.length}</span>
-                <span>Mapped URLs</span>
-              </span>
-            </div>
+      {/* Festival Hero Header Card */}
+      <div className="bg-slate-900/90 rounded-2xl p-6 border border-slate-800 shadow-xl shadow-black/20 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <div className="flex items-center space-x-2">
+            <span className="text-2xl">{flag}</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              {countryName} {festival.region ? `• ${festival.region}` : ''}
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+              {festival.category_group}
+            </span>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center space-x-2 shrink-0">
-            {isManager && (
-              <>
-                <button
-                  onClick={() => setIsEditOpen(true)}
-                  className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>Edit Festival</span>
-                </button>
+          <h1 className="text-3xl font-bold text-white tracking-tight mt-1">{festival.name}</h1>
+          {festival.description && (
+            <p className="text-xs text-slate-300 mt-2 max-w-2xl leading-relaxed">{festival.description}</p>
+          )}
 
-                <button
-                  onClick={handleDeleteFestival}
-                  className="p-2 rounded-xl text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 transition-colors"
-                  title="Deactivate festival"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
+          <div className="flex flex-wrap items-center gap-4 mt-4 text-xs text-slate-400">
+            <div className="flex items-center space-x-1.5">
+              <User className="w-4 h-4 text-emerald-400" />
+              <span>Assigned: <strong className="text-white">{festival.assigned_leader_name || 'Unassigned'}</strong></span>
+            </div>
+            <span>•</span>
+            <div className="flex items-center space-x-1.5">
+              <Layers className="w-4 h-4 text-indigo-400" />
+              <span>Landing Pages: <strong className="text-white">{pages.length}</strong></span>
+            </div>
+            <span>•</span>
+            <div className="flex items-center space-x-1.5">
+              <CheckSquare className="w-4 h-4 text-purple-400" />
+              <span>Preparation Tasks: <strong className="text-white">{tasks.length}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Edition Dates & Verification Status Card */}
+        <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 md:w-80 shrink-0 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400 font-medium">Next Edition:</span>
+            <span className="text-sm font-bold text-white">
+              {latestDate ? `Edition ${latestDate.year}` : 'No edition set'}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400 font-medium">Festival Dates:</span>
+            <span className="text-xs font-semibold text-white">
+              {latestDate ? `${latestDate.start_date} - ${latestDate.end_date}` : 'Dates TBD'}
+            </span>
+          </div>
+
+          {daysRemaining !== null && (
+            <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+              <span className="text-xs text-slate-400 font-medium">Timeline:</span>
+              <span className={`text-xs font-bold ${daysRemaining < 0 ? 'text-slate-500' : daysRemaining <= 30 ? 'text-rose-400 animate-pulse' : 'text-indigo-400'}`}>
+                {daysRemaining < 0 ? 'Concluded' : daysRemaining === 0 ? 'Today!' : `${daysRemaining} days remaining`}
+              </span>
+            </div>
+          )}
+
+          <div className="pt-2 flex items-center justify-between text-[11px]">
+            <span className="text-slate-400">Date Status:</span>
+            {latestDate?.date_status === 'VERIFIED' ? (
+              <span className="inline-flex items-center space-x-1 text-emerald-400 font-bold">
+                <CheckCircle className="w-3 h-3" />
+                <span>VERIFIED</span>
+              </span>
+            ) : latestDate?.date_status === 'ESTIMATED' ? (
+              <span className="inline-flex items-center space-x-1 text-amber-400 font-bold">
+                <Clock className="w-3 h-3" />
+                <span>ESTIMATED</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center space-x-1 text-rose-400 font-bold">
+                <AlertTriangle className="w-3 h-3" />
+                <span>UNVERIFIED</span>
+              </span>
             )}
           </div>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
+      {/* Navigation Tabs (Expected Structure) */}
       <div className="flex border-b border-slate-800 space-x-1 overflow-x-auto">
         <button
-          onClick={() => setActiveTab('analytics')}
-          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'analytics'
-              ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>SEO YoY Analytics</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('subcategories')}
-          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-            activeTab === 'subcategories'
+          onClick={() => setActiveTab('pages')}
+          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'pages'
               ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>Subcategories & URLs ({pages.length})</span>
+          <span>Landing Pages ({pages.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab('tasks')}
-          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
             activeTab === 'tasks'
               ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <CheckSquare className="w-4 h-4" />
-          <span>Preparation Tasks ({tasks.length})</span>
+          <span>SEO Tasks ({tasks.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('gsc')}
+          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'gsc'
+              ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>GSC Performance</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('yoy')}
+          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'yoy'
+              ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span>Year-wise Comparison</span>
         </button>
 
         <button
           onClick={() => setActiveTab('editions')}
-          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+          className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
             activeTab === 'editions'
               ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <Calendar className="w-4 h-4" />
-          <span>Year Calendar & Dates ({yearDates.length})</span>
+          <span>Festival Dates ({yearDates.length})</span>
         </button>
       </div>
 
       {/* ========================================================================= */}
-      {/* TAB 1: SEO YOY ANALYTICS (Task 5)                                         */}
+      {/* TAB 1: LANDING PAGES                                                      */}
       {/* ========================================================================= */}
-      {activeTab === 'analytics' && (
+      {activeTab === 'pages' && (
         <div className="space-y-6">
-          {/* Analytics Controls Toolbar */}
-          <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Current Year Selection */}
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-slate-400 font-medium">Target Year:</span>
-                <select
-                  value={analyticsCurrentYear}
-                  onChange={(e) => setAnalyticsCurrentYear(Number(e.target.value))}
-                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  {yearDates.map((yd) => (
-                    <option key={yd.year} value={yd.year}>
-                      {yd.year} ({yd.start_date})
-                    </option>
-                  ))}
-                  {!yearDates.some((yd) => yd.year === analyticsCurrentYear) && (
-                    <option value={analyticsCurrentYear}>{analyticsCurrentYear}</option>
-                  )}
-                </select>
-              </div>
-
-              {/* Baseline Year Selection */}
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-slate-400 font-medium">Compare with:</span>
-                <select
-                  value={analyticsPrevYear}
-                  onChange={(e) => setAnalyticsPrevYear(Number(e.target.value))}
-                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  {yearDates
-                    .filter((yd) => yd.year !== analyticsCurrentYear)
-                    .map((yd) => (
-                      <option key={yd.year} value={yd.year}>
-                        {yd.year} ({yd.start_date})
-                      </option>
-                    ))}
-                  {!yearDates.some((yd) => yd.year === analyticsPrevYear) && (
-                    <option value={analyticsPrevYear}>{analyticsPrevYear}</option>
-                  )}
-                </select>
-              </div>
-
-              {/* Country Filtering */}
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-slate-400 font-medium">Searcher Country:</span>
-                <select
-                  value={analyticsCountry}
-                  onChange={(e) => setAnalyticsCountry(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="ALL">🌐 Worldwide (All)</option>
-                  <option value="IN">🇮🇳 India</option>
-                  <option value="US">🇺🇸 USA</option>
-                  <option value="GB">🇬🇧 UK</option>
-                  <option value="CA">🇨🇦 Canada</option>
-                  <option value="AU">🇦🇺 Australia</option>
-                  <option value="AE">🇦🇪 UAE</option>
-                </select>
-              </div>
-            </div>
-
-            <button
-              onClick={loadAnalytics}
-              disabled={analyticsLoading}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${analyticsLoading ? 'animate-spin' : ''}`} />
-              <span>Refresh Metrics</span>
-            </button>
-          </div>
-
-          {analyticsLoading ? (
-            <div className="h-64 bg-slate-900/60 rounded-2xl animate-pulse border border-slate-800" />
-          ) : analyticsError ? (
-            <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-6 text-center text-xs text-rose-300">
-              <AlertCircle className="w-6 h-6 text-rose-400 mx-auto mb-2" />
-              <span>{analyticsError}</span>
-            </div>
-          ) : comparisonData ? (
-            <div className="space-y-6">
-              {/* Season Progress Banner */}
-              <div
-                className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
-                  comparisonData.summary.season_status === 'COMPLETE'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                    : comparisonData.summary.season_status === 'SEASON_TO_DATE'
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                    : 'bg-slate-800/60 border-slate-700 text-slate-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  {comparisonData.summary.season_status === 'COMPLETE' ? (
-                    <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-                  ) : (
-                    <Clock className="w-5 h-5 text-amber-400 shrink-0" />
-                  )}
-                  <div>
-                    <span className="font-bold">
-                      {comparisonData.summary.season_status === 'COMPLETE'
-                        ? 'Completed Season Comparison'
-                        : comparisonData.summary.season_status === 'SEASON_TO_DATE'
-                        ? 'Season-to-Date (In Progress)'
-                        : 'Historical Data Range Unavailable'}
-                    </span>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Comparing {comparisonData.festival_name} {comparisonData.current_year} (relative day{' '}
-                      {comparisonData.summary.relative_window_start_day} to +{comparisonData.summary.relative_window_end_day}) vs{' '}
-                      {comparisonData.previous_year} equivalent festival days.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="shrink-0 font-mono text-[11px] bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800 text-slate-200">
-                  {comparisonData.summary.searcher_country_label}
-                </div>
-              </div>
-
-              {/* 4 YoY StatCards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Clicks */}
-                <div className="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-lg shadow-black/20 flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">YoY Clicks</span>
-                    <span className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
-                      <MousePointer className="w-4 h-4" />
-                    </span>
-                  </div>
-
-                  <div className="my-3">
-                    <div className="text-2xl font-bold text-white tracking-tight">
-                      {comparisonData.summary.current_period.clicks.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Prev {comparisonData.previous_year}:{' '}
-                      <span className="text-slate-300 font-medium">
-                        {comparisonData.summary.previous_period.clicks.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <div className="flex items-center space-x-1.5">
-                      {comparisonData.summary.click_growth_status === 'NEW_TRAFFIC' ? (
-                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                          NEW TRAFFIC
-                        </span>
-                      ) : comparisonData.summary.click_growth_status === 'NO_BASELINE' ? (
-                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
-                          NO BASELINE
-                        </span>
-                      ) : (
-                        <span
-                          className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full font-semibold text-[11px] ${
-                            (comparisonData.summary.click_growth_pct ?? 0) >= 0
-                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                          }`}
-                        >
-                          {(comparisonData.summary.click_growth_pct ?? 0) >= 0 ? (
-                            <TrendingUp className="w-3 h-3" />
-                          ) : (
-                            <TrendingDown className="w-3 h-3" />
-                          )}
-                          <span>
-                            {(comparisonData.summary.click_growth_pct ?? 0) >= 0 ? '+' : ''}
-                            {comparisonData.summary.click_growth_pct?.toFixed(1)}%
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-slate-400 font-mono text-[11px]">
-                      {comparisonData.summary.click_diff >= 0 ? '+' : ''}
-                      {comparisonData.summary.click_diff.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Impressions */}
-                <div className="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-lg shadow-black/20 flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">YoY Impressions</span>
-                    <span className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
-                      <Eye className="w-4 h-4" />
-                    </span>
-                  </div>
-
-                  <div className="my-3">
-                    <div className="text-2xl font-bold text-white tracking-tight">
-                      {comparisonData.summary.current_period.impressions.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Prev {comparisonData.previous_year}:{' '}
-                      <span className="text-slate-300 font-medium">
-                        {comparisonData.summary.previous_period.impressions.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <div className="flex items-center space-x-1.5">
-                      {comparisonData.summary.impression_growth_status === 'NEW_TRAFFIC' ? (
-                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                          NEW TRAFFIC
-                        </span>
-                      ) : comparisonData.summary.impression_growth_status === 'NO_BASELINE' ? (
-                        <span className="px-2 py-0.5 rounded-full font-bold text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
-                          NO BASELINE
-                        </span>
-                      ) : (
-                        <span
-                          className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full font-semibold text-[11px] ${
-                            (comparisonData.summary.impression_growth_pct ?? 0) >= 0
-                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                          }`}
-                        >
-                          {(comparisonData.summary.impression_growth_pct ?? 0) >= 0 ? (
-                            <TrendingUp className="w-3 h-3" />
-                          ) : (
-                            <TrendingDown className="w-3 h-3" />
-                          )}
-                          <span>
-                            {(comparisonData.summary.impression_growth_pct ?? 0) >= 0 ? '+' : ''}
-                            {comparisonData.summary.impression_growth_pct?.toFixed(1)}%
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-slate-400 font-mono text-[11px]">
-                      {comparisonData.summary.impression_diff >= 0 ? '+' : ''}
-                      {comparisonData.summary.impression_diff.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* CTR */}
-                <div className="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-lg shadow-black/20 flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Click-Through Rate</span>
-                    <span className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
-                      <Percent className="w-4 h-4" />
-                    </span>
-                  </div>
-
-                  <div className="my-3">
-                    <div className="text-2xl font-bold text-white tracking-tight">
-                      {comparisonData.summary.current_period.ctr.toFixed(2)}%
-                    </div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Prev {comparisonData.previous_year}:{' '}
-                      <span className="text-slate-300 font-medium">
-                        {comparisonData.summary.previous_period.ctr.toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span
-                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full font-semibold text-[11px] ${
-                        comparisonData.summary.ctr_diff >= 0
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                      }`}
-                    >
-                      <span>
-                        {comparisonData.summary.ctr_diff >= 0 ? '+' : ''}
-                        {comparisonData.summary.ctr_diff.toFixed(2)}% pts
-                      </span>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Avg Position */}
-                <div className="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-lg shadow-black/20 flex flex-col justify-between">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Average Position</span>
-                    <span className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
-                      <Target className="w-4 h-4" />
-                    </span>
-                  </div>
-
-                  <div className="my-3">
-                    <div className="text-2xl font-bold text-white tracking-tight">
-                      {comparisonData.summary.current_period.position > 0
-                        ? comparisonData.summary.current_period.position.toFixed(1)
-                        : '—'}
-                    </div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      Prev {comparisonData.previous_year}:{' '}
-                      <span className="text-slate-300 font-medium">
-                        {comparisonData.summary.previous_period.position > 0
-                          ? comparisonData.summary.previous_period.position.toFixed(1)
-                          : '—'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span
-                      className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full font-semibold text-[11px] ${
-                        comparisonData.summary.position_diff <= 0
-                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                      }`}
-                    >
-                      <span>
-                        {comparisonData.summary.position_diff <= 0 ? '▲ ' : '▼ '}
-                        {Math.abs(comparisonData.summary.position_diff).toFixed(1)} rank
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Festival-Relative Daily Trends Chart */}
-              <div className="bg-slate-900/90 rounded-2xl p-6 border border-slate-800 shadow-xl shadow-black/20">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h3 className="text-base font-bold text-white tracking-tight">
-                      Festival-Relative Daily Trajectory
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Timeline anchored on festival start date: Day -30 (preparation peak) to Day +5 (post-event follow through).
-                    </p>
-                  </div>
-
-                  {/* Metric Switcher */}
-                  <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800 self-start sm:self-auto">
-                    {[
-                      { key: 'clicks', label: 'Clicks' },
-                      { key: 'impressions', label: 'Impressions' },
-                      { key: 'ctr', label: 'CTR' },
-                      { key: 'position', label: 'Position' },
-                    ].map((m) => (
-                      <button
-                        key={m.key}
-                        onClick={() => setAnalyticsMetric(m.key as any)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                          analyticsMetric === m.key
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={comparisonData.relative_trends}
-                      margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                    >
-                      <defs>
-                        <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                        </linearGradient>
-                        <linearGradient id="colorPrev" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.2} />
-                          <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis
-                        dataKey="relative_day"
-                        stroke="#64748b"
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(val) => `Day ${val >= 0 ? `+${val}` : val}`}
-                      />
-                      <YAxis
-                        stroke="#64748b"
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        reversed={analyticsMetric === 'position'}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#0f172a',
-                          borderColor: '#334155',
-                          borderRadius: '0.75rem',
-                          color: '#fff',
-                          fontSize: '12px',
-                        }}
-                        formatter={(val: any) => [
-                          analyticsMetric === 'ctr'
-                            ? `${val}%`
-                            : analyticsMetric === 'position'
-                            ? val?.toFixed(1)
-                            : val?.toLocaleString(),
-                        ]}
-                      />
-                      <Legend />
-                      <Area
-                        type="monotone"
-                        dataKey={
-                          analyticsMetric === 'clicks'
-                            ? 'current_clicks'
-                            : analyticsMetric === 'impressions'
-                            ? 'current_impressions'
-                            : analyticsMetric === 'ctr'
-                            ? 'current_ctr'
-                            : 'current_position'
-                        }
-                        name={`${comparisonData.current_year} (Current)`}
-                        stroke="#6366f1"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorCurrent)"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey={
-                          analyticsMetric === 'clicks'
-                            ? 'previous_clicks'
-                            : analyticsMetric === 'impressions'
-                            ? 'previous_impressions'
-                            : analyticsMetric === 'ctr'
-                            ? 'previous_ctr'
-                            : 'previous_position'
-                        }
-                        name={`${comparisonData.previous_year} (Previous)`}
-                        stroke="#94a3b8"
-                        strokeWidth={2}
-                        strokeDasharray="4 4"
-                        fillOpacity={1}
-                        fill="url(#colorPrev)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Individual Landing Page YoY Comparison Table */}
-              <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl shadow-black/20 overflow-hidden">
-                <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Landing Page Performance Comparison</h4>
-                    <p className="text-[11px] text-slate-400">
-                      URL-level performance across {comparisonData.current_year} vs {comparisonData.previous_year} season windows.
-                    </p>
-                  </div>
-
-                  <div className="relative w-full sm:w-64">
-                    <input
-                      type="text"
-                      placeholder="Filter URLs..."
-                      value={pageSearchTerm}
-                      onChange={(e) => setPageSearchTerm(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-950/40 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
-                      <tr>
-                        <th className="px-4 py-3">Landing Page URL</th>
-                        <th className="px-4 py-3 text-right">Clicks ({comparisonData.current_year})</th>
-                        <th className="px-4 py-3 text-right">Clicks ({comparisonData.previous_year})</th>
-                        <th className="px-4 py-3 text-right">YoY Growth</th>
-                        <th className="px-4 py-3 text-right">Impressions</th>
-                        <th className="px-4 py-3 text-right">CTR</th>
-                        <th className="px-4 py-3 text-right">Avg Pos</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                      {comparisonData.landing_pages
-                        .filter((p) => p.page_url.toLowerCase().includes(pageSearchTerm.toLowerCase()))
-                        .map((pageComp) => {
-                          return (
-                            <tr key={pageComp.page_url} className="hover:bg-slate-800/40 transition-colors">
-                              <td className="px-4 py-3 max-w-sm truncate">
-                                <a
-                                  href={pageComp.page_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="font-medium text-white hover:text-indigo-400 transition-colors inline-flex items-center space-x-1.5"
-                                >
-                                  <span className="truncate">{pageComp.page_url}</span>
-                                  <ExternalLink className="w-3 h-3 text-slate-500 shrink-0" />
-                                </a>
-                              </td>
-                              <td className="px-4 py-3 text-right font-semibold text-white">
-                                {pageComp.current_clicks.toLocaleString()}
-                              </td>
-                              <td className="px-4 py-3 text-right text-slate-400">
-                                {pageComp.previous_clicks.toLocaleString()}
-                              </td>
-                              <td className="px-4 py-3 text-right">
-                                {pageComp.click_growth_status === 'NEW_TRAFFIC' ? (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
-                                    NEW
-                                  </span>
-                                ) : pageComp.click_growth_status === 'NO_BASELINE' ? (
-                                  <span className="text-slate-500 font-mono">—</span>
-                                ) : (
-                                  <span
-                                    className={`font-semibold ${
-                                      (pageComp.click_growth_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                                    }`}
-                                  >
-                                    {(pageComp.click_growth_pct ?? 0) >= 0 ? '+' : ''}
-                                    {pageComp.click_growth_pct?.toFixed(1)}%
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono text-slate-300">
-                                {pageComp.current_impressions.toLocaleString()}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono text-slate-300">
-                                {pageComp.current_ctr.toFixed(1)}%
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono text-slate-300">
-                                {pageComp.current_position > 0 ? pageComp.current_position.toFixed(1) : '—'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: SUBCATEGORIES & MAPPED URLS (Task 4)                              */}
-      {/* ========================================================================= */}
-      {activeTab === 'subcategories' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Header Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-xl shadow-black/20">
             <div>
-              <h3 className="text-base font-bold text-white tracking-tight">Festival Subcategories & URLs</h3>
-              <p className="text-xs text-slate-400">
-                Organize distinct festival design categories (e.g. Invitation Templates, Wishes, Posters) and map landing pages.
+              <div className="flex items-center space-x-2">
+                <span className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                  <Layers className="w-5 h-5" />
+                </span>
+                <h3 className="text-base font-bold text-white tracking-tight">Landing Pages</h3>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                  {pages.length} Mapped
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Mapped Crafty Art URLs with real-time GSC performance, SEO task status, and YoY metrics.
               </p>
             </div>
 
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => setIsAddSubcatOpen(true)}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+                onClick={() => {
+                  setBulkUrlsText('');
+                  setBulkResult(null);
+                  setBulkError(null);
+                  setIsBulkAddOpen(true);
+                }}
+                className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Add Subcategory</span>
+                <Plus className="w-4 h-4" />
+                <span>Add Landing Pages</span>
               </button>
 
               <button
-                onClick={() => setIsMapPageOpen(true)}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                onClick={() => setIsAddSubcatOpen(true)}
+                className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+                title="Optional: Add category groups (e.g. Posters, Wishes, Cards)"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Map Landing Page</span>
+                <FolderPlus className="w-4 h-4 text-slate-400" />
+                <span>Add Subcategory</span>
               </button>
             </div>
           </div>
 
-          {/* Subcategory List with Mapped Pages */}
-          {subcategories.length === 0 ? (
-            <div className="bg-slate-900/90 rounded-2xl p-8 border border-slate-800 text-center">
-              <Layers className="w-8 h-8 text-slate-500 mx-auto mb-2" />
-              <h4 className="text-sm font-bold text-white">No Subcategories Created</h4>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                Create subcategories like "Diwali Invitation Templates" or "Diwali Festival Images" to structure your SEO URLs.
+          {/* Filter Bar */}
+          <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search mapped URLs..."
+                  value={pageSearchTerm}
+                  onChange={(e) => setPageSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+
+              {subcategories.length > 0 && (
+                <div className="flex items-center space-x-2 shrink-0">
+                  <span className="text-xs text-slate-400 font-medium">Category:</span>
+                  <select
+                    value={pageSubcatFilter}
+                    onChange={(e) => setPageSubcatFilter(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="ALL">All Categories</option>
+                    <option value="DIRECT">Direct (No Subcategory)</option>
+                    {subcategories.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="text-xs text-slate-400 font-medium">
+              Showing <span className="text-white font-bold">{filteredPages.length}</span> of {pages.length} URLs
+            </div>
+          </div>
+
+          {/* Landing Pages Table */}
+          {pages.length === 0 ? (
+            <div className="bg-slate-900/90 rounded-2xl p-12 border border-slate-800 text-center">
+              <Layers className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+              <h4 className="text-base font-bold text-white">No Landing Pages Mapped Yet</h4>
+              <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                Map Crafty Art landing page URLs (e.g. /diwali-wishes/templates) directly to {festival.name} to track GSC metrics and SEO preparation.
               </p>
               <button
-                onClick={() => setIsAddSubcatOpen(true)}
-                className="mt-4 px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                onClick={() => {
+                  setBulkUrlsText('');
+                  setBulkResult(null);
+                  setBulkError(null);
+                  setIsBulkAddOpen(true);
+                }}
+                className="mt-5 inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
               >
-                Create First Subcategory
+                <Plus className="w-4 h-4" />
+                <span>Add Landing Pages</span>
               </button>
             </div>
+          ) : filteredPages.length === 0 ? (
+            <div className="bg-slate-900/90 rounded-2xl p-8 border border-slate-800 text-center text-xs text-slate-400">
+              No landing pages match your search filter.
+            </div>
           ) : (
-            <div className="space-y-4">
-              {subcategories.map((subcat) => {
-                const subcatPages = pages.filter((p) => p.subcategory_id === subcat.id);
+            <div className="bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-xl shadow-black/20">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      <th className="py-3 px-4">Landing Page URL</th>
+                      <th className="py-3 px-4">Leader</th>
+                      <th className="py-3 px-4">SEO Prep Status</th>
+                      <th className="py-3 px-4 text-right">Clicks</th>
+                      <th className="py-3 px-4 text-right">Impressions</th>
+                      <th className="py-3 px-4 text-right">CTR</th>
+                      <th className="py-3 px-4 text-right">Avg Position</th>
+                      <th className="py-3 px-4 text-right">YoY Performance</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredPages.map((page) => {
+                      const pageMetrics = metricsMap.get(page.normalized_url) || metricsMap.get(page.full_url);
+                      const pageTasks = tasks.filter((t) => t.landing_page_id === page.id);
+                      const completedCount = pageTasks.filter((t) => t.status === 'COMPLETED').length;
 
-                return (
-                  <div
-                    key={subcat.id}
-                    className="bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-lg shadow-black/20"
-                  >
-                    <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
-                          <Layers className="w-4 h-4" />
-                        </span>
-                        <div>
-                          <h4 className="text-sm font-bold text-white">{subcat.name}</h4>
-                          {subcat.description && (
-                            <p className="text-[11px] text-slate-400 mt-0.5">{subcat.description}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                          {subcat.slug}
-                        </span>
-                        <span className="text-xs text-slate-400 font-medium">{subcatPages.length} URLs</span>
-                      </div>
-                    </div>
-
-                    <div className="divide-y divide-slate-800/60">
-                      {subcatPages.length === 0 ? (
-                        <div className="p-4 text-xs text-slate-500 text-center">
-                          No URLs mapped to this subcategory yet.{' '}
-                          <button
-                            onClick={() => {
-                              setMapSubcatId(subcat.id);
-                              setIsMapPageOpen(true);
-                            }}
-                            className="text-indigo-400 hover:underline ml-1"
-                          >
-                            Map URL now
-                          </button>
-                        </div>
-                      ) : (
-                        subcatPages.map((page) => (
-                          <div
-                            key={page.id}
-                            className="p-3.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-800/30 transition-colors"
-                          >
-                            <div className="min-w-0 flex-1">
+                      return (
+                        <tr key={page.id} className="hover:bg-slate-800/30 transition-colors">
+                          {/* URL & Subcategory */}
+                          <td className="py-4 px-4">
+                            <div className="flex items-start space-x-2 max-w-md">
                               <a
                                 href={page.full_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="font-semibold text-white hover:text-indigo-400 transition-colors inline-flex items-center space-x-1.5 truncate max-w-xl"
+                                className="font-semibold text-white hover:text-indigo-400 transition-colors text-xs inline-flex items-center space-x-1.5 break-all"
                               >
-                                <span className="truncate">{page.full_url}</span>
+                                <span>{page.full_url}</span>
                                 <ExternalLink className="w-3 h-3 text-slate-500 shrink-0" />
                               </a>
-                              <div className="text-[11px] text-slate-400 mt-0.5 flex items-center space-x-2">
-                                <span>Priority: <span className="text-slate-300 font-medium">{page.priority}</span></span>
-                                <span>•</span>
-                                <span>Status: <span className="text-emerald-400 font-medium">{page.status}</span></span>
-                              </div>
                             </div>
+                            <div className="flex items-center space-x-2 mt-1">
+                              {page.subcategory_name ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                                  {page.subcategory_name}
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                                  Direct Festival Page
+                                </span>
+                              )}
+                              <span className="text-[10px] text-slate-500">
+                                Priority: <span className="text-slate-400">{page.priority}</span>
+                              </span>
+                            </div>
+                          </td>
 
+                          {/* Assigned Team Leader */}
+                          <td className="py-4 px-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-1.5 text-xs text-slate-300">
+                              <User className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>{page.assigned_leader_name || festival.assigned_leader_name || 'Unassigned'}</span>
+                            </div>
+                          </td>
+
+                          {/* SEO Preparation Status & Tasks */}
+                          <td className="py-4 px-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-2">
+                              {pageTasks.length === 0 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                  No Tasks
+                                </span>
+                              ) : completedCount === pageTasks.length ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1">
+                                  <CheckCircle className="w-3 h-3" />
+                                  <span>{completedCount}/{pageTasks.length} Done</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center space-x-1">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{completedCount}/{pageTasks.length} In Progress</span>
+                                </span>
+                              )}
+
+                              <button
+                                onClick={() => {
+                                  setTaskPageId(page.id);
+                                  setTaskTitle(`SEO Task: ${page.full_url.replace(/^https?:\/\/[^/]+/, '')}`);
+                                  setIsAddTaskOpen(true);
+                                }}
+                                className="p-1 rounded-lg text-slate-400 hover:text-indigo-400 hover:bg-slate-800 transition-colors"
+                                title="Create SEO task for this landing page"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+
+                          {/* GSC Clicks */}
+                          <td className="py-4 px-4 text-right font-bold text-slate-200 text-xs">
+                            {pageMetrics ? pageMetrics.current_clicks.toLocaleString() : '0'}
+                          </td>
+
+                          {/* GSC Impressions */}
+                          <td className="py-4 px-4 text-right font-medium text-slate-300 text-xs">
+                            {pageMetrics ? pageMetrics.current_impressions.toLocaleString() : '0'}
+                          </td>
+
+                          {/* CTR */}
+                          <td className="py-4 px-4 text-right font-medium text-slate-300 text-xs">
+                            {pageMetrics ? `${(pageMetrics.current_ctr * 100).toFixed(1)}%` : '0.0%'}
+                          </td>
+
+                          {/* Average Position */}
+                          <td className="py-4 px-4 text-right font-semibold text-slate-200 text-xs">
+                            {pageMetrics && pageMetrics.current_position > 0 ? pageMetrics.current_position.toFixed(1) : '-'}
+                          </td>
+
+                          {/* Year-over-Year Performance */}
+                          <td className="py-4 px-4 text-right whitespace-nowrap">
+                            {pageMetrics && pageMetrics.click_growth_pct !== null && pageMetrics.click_growth_pct !== undefined ? (
+                              <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                pageMetrics.click_growth_pct > 0
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                  : pageMetrics.click_growth_pct < 0
+                                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                                  : 'bg-slate-800 text-slate-300 border border-slate-700'
+                              }`}>
+                                {pageMetrics.click_growth_pct > 0 ? (
+                                  <TrendingUp className="w-3 h-3" />
+                                ) : pageMetrics.click_growth_pct < 0 ? (
+                                  <TrendingDown className="w-3 h-3" />
+                                ) : null}
+                                <span>{pageMetrics.click_growth_pct > 0 ? `+${pageMetrics.click_growth_pct}%` : `${pageMetrics.click_growth_pct}%`} YoY</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-500">Baseline</span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-4 px-4 text-right">
                             <button
                               onClick={() => handleUnmapPage(page.id)}
-                              className="text-slate-500 hover:text-rose-400 transition-colors p-1"
-                              title="Unmap URL"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                              title="Unmap Landing Page"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: PREPARATION TASKS (Tasks 4 & 6)                                    */}
+      {/* TAB 2: SEO PREPARATION TASKS                                              */}
       {/* ========================================================================= */}
       {activeTab === 'tasks' && (
         <div className="space-y-6">
@@ -1202,13 +945,37 @@ export const FestivalDetailPage: React.FC = () => {
               </p>
             </div>
 
-            <button
-              onClick={() => setIsAddTaskOpen(true)}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create Task</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              {pages.length > 0 && (
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400 font-medium">Page:</span>
+                  <select
+                    value={taskPageFilter}
+                    onChange={(e) => setTaskPageFilter(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white"
+                  >
+                    <option value="ALL">All Tasks</option>
+                    <option value="FESTIVAL_LEVEL">Festival-Level Only</option>
+                    {pages.map((p) => (
+                      <option key={p.id} value={p.id.toString()}>
+                        {p.full_url.replace(/^https?:\/\/[^/]+/, '')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <button
+                onClick={() => {
+                  setTaskPageId(undefined);
+                  setIsAddTaskOpen(true);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Task</span>
+              </button>
+            </div>
           </div>
 
           {/* Kanban Columns */}
@@ -1219,7 +986,12 @@ export const FestivalDetailPage: React.FC = () => {
               { status: 'READY_FOR_REVIEW', title: 'Ready for Review', badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
               { status: 'COMPLETED', title: 'Completed', badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
             ].map((col) => {
-              const colTasks = tasks.filter((t) => t.status === col.status);
+              const colTasks = tasks.filter((t) => {
+                if (t.status !== col.status) return false;
+                if (taskPageFilter === 'ALL') return true;
+                if (taskPageFilter === 'FESTIVAL_LEVEL') return !t.landing_page_id;
+                return t.landing_page_id === Number(taskPageFilter);
+              });
 
               return (
                 <div
@@ -1260,7 +1032,7 @@ export const FestivalDetailPage: React.FC = () => {
                                 {isManager && (
                                   <button
                                     onClick={() => handleDeleteTask(t.id)}
-                                    className="text-slate-500 hover:text-rose-400 p-0.5"
+                                    className="text-slate-500 hover:text-rose-400 p-0.5 cursor-pointer"
                                   >
                                     <Trash2 className="w-3 h-3" />
                                   </button>
@@ -1272,6 +1044,20 @@ export const FestivalDetailPage: React.FC = () => {
                               )}
 
                               <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1.5 text-[11px]">
+                                {t.landing_page_url && (
+                                  <div className="flex items-center justify-between text-slate-400">
+                                    <span>Page:</span>
+                                    <a
+                                      href={t.landing_page_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-indigo-400 hover:underline truncate max-w-[140px]"
+                                    >
+                                      {t.landing_page_url.replace(/^https?:\/\/[^/]+/, '')}
+                                    </a>
+                                  </div>
+                                )}
+
                                 <div className="flex items-center justify-between text-slate-400">
                                   <span>Milestone:</span>
                                   <span className="text-slate-300 font-mono text-[10px]">{t.milestone_stage}</span>
@@ -1303,7 +1089,7 @@ export const FestivalDetailPage: React.FC = () => {
                                 <select
                                   value={t.status}
                                   onChange={(e) => handleUpdateTaskStatus(t.id, e.target.value)}
-                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-indigo-500"
+                                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
                                 >
                                   <option value="NOT_STARTED">Not Started</option>
                                   <option value="IN_PROGRESS">In Progress</option>
@@ -1325,7 +1111,216 @@ export const FestivalDetailPage: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 4: YEAR EDITIONS & DATES                                              */}
+      {/* TAB 3: GSC PERFORMANCE                                                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'gsc' && (
+        <div className="space-y-6">
+          {/* Controls Bar */}
+          <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-slate-400 font-medium">Current Edition:</span>
+                <select
+                  value={analyticsCurrentYear}
+                  onChange={(e) => setAnalyticsCurrentYear(Number(e.target.value))}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                >
+                  {yearDates.map((yd) => (
+                    <option key={yd.year} value={yd.year}>
+                      {yd.year} Edition
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-slate-400 font-medium">Country:</span>
+                <select
+                  value={analyticsCountry}
+                  onChange={(e) => setAnalyticsCountry(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="ALL">🌐 All Countries (Worldwide)</option>
+                  <option value="IN">🇮🇳 India</option>
+                  <option value="US">🇺🇸 USA</option>
+                  <option value="GB">🇬🇧 UK</option>
+                  <option value="CA">🇨🇦 Canada</option>
+                  <option value="AU">🇦🇺 Australia</option>
+                  <option value="AE">🇦🇪 UAE</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={loadAnalytics}
+              disabled={analyticsLoading}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${analyticsLoading ? 'animate-spin' : ''}`} />
+              <span>Refresh GSC</span>
+            </button>
+          </div>
+
+          {/* GSC Metric KPI Cards */}
+          {comparisonData ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-400 uppercase">GSC Clicks</span>
+                  <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
+                    <MousePointer className="w-4 h-4" />
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-white mt-2">
+                  {(comparisonData.summary.current_period?.clicks ?? 0).toLocaleString()}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  vs {(comparisonData.summary.previous_period?.clicks ?? 0).toLocaleString()} last edition
+                </div>
+              </div>
+
+              <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-400 uppercase">GSC Impressions</span>
+                  <span className="p-1.5 rounded-lg bg-purple-500/10 text-purple-400">
+                    <Eye className="w-4 h-4" />
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-white mt-2">
+                  {(comparisonData.summary.current_period?.impressions ?? 0).toLocaleString()}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  vs {(comparisonData.summary.previous_period?.impressions ?? 0).toLocaleString()} last edition
+                </div>
+              </div>
+
+              <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-400 uppercase">Average CTR</span>
+                  <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                    <Percent className="w-4 h-4" />
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-white mt-2">
+                  {((comparisonData.summary.current_period?.ctr ?? 0) * 100).toFixed(1)}%
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  vs {((comparisonData.summary.previous_period?.ctr ?? 0) * 100).toFixed(1)}% last edition
+                </div>
+              </div>
+
+              <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-400 uppercase">Average Position</span>
+                  <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+                    <Target className="w-4 h-4" />
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-white mt-2">
+                  {(comparisonData.summary.current_period?.position ?? 0) > 0 ? (comparisonData.summary.current_period.position).toFixed(1) : '-'}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  vs {(comparisonData.summary.previous_period?.position ?? 0) > 0 ? (comparisonData.summary.previous_period.position).toFixed(1) : '-'} last edition
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-slate-900/90 rounded-2xl p-8 border border-slate-800 text-center text-xs text-slate-400">
+              No GSC performance data available for this festival edition yet.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 4: YEAR-WISE COMPARISON                                               */}
+      {/* ========================================================================= */}
+      {activeTab === 'yoy' && (
+        <div className="space-y-6">
+          <div className="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-xl shadow-black/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-bold text-white tracking-tight">Year-over-Year Relative Comparison</h3>
+                <p className="text-xs text-slate-400">
+                  Anchored comparison window: Day T-30 to Day T+5 relative to festival start date.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-slate-400 font-medium">Metric:</span>
+                <select
+                  value={analyticsMetric}
+                  onChange={(e) => setAnalyticsMetric(e.target.value as any)}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white"
+                >
+                  <option value="clicks">Clicks</option>
+                  <option value="impressions">Impressions</option>
+                  <option value="ctr">CTR</option>
+                  <option value="position">Position</option>
+                </select>
+              </div>
+            </div>
+
+            {/* YoY Chart */}
+            {comparisonData && comparisonData.relative_trends.length > 0 ? (
+              <div className="mt-4 h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={comparisonData.relative_trends}>
+                    <defs>
+                      <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                      </linearGradient>
+                      <linearGradient id="colorPrevious" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis
+                      dataKey="relative_day_label"
+                      stroke="#64748b"
+                      fontSize={11}
+                      tickLine={false}
+                    />
+                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#020617', borderColor: '#1e293b', borderRadius: '0.75rem', fontSize: '12px' }}
+                    />
+                    <Legend />
+                    <Area
+                      type="monotone"
+                      dataKey={analyticsMetric === 'clicks' ? 'current_clicks' : analyticsMetric === 'impressions' ? 'current_impressions' : analyticsMetric === 'ctr' ? 'current_ctr' : 'current_position'}
+                      name={`${analyticsCurrentYear} Edition`}
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#colorCurrent)"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey={analyticsMetric === 'clicks' ? 'previous_clicks' : analyticsMetric === 'impressions' ? 'previous_impressions' : analyticsMetric === 'ctr' ? 'previous_ctr' : 'previous_position'}
+                      name={`${analyticsPrevYear} Edition`}
+                      stroke="#94a3b8"
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      fillOpacity={1}
+                      fill="url(#colorPrevious)"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="py-16 text-center text-xs text-slate-500">
+                No comparative daily trends available for selected editions.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: FESTIVAL DATES                                                     */}
       {/* ========================================================================= */}
       {activeTab === 'editions' && (
         <div className="space-y-6">
@@ -1340,39 +1335,39 @@ export const FestivalDetailPage: React.FC = () => {
             {isManager && (
               <button
                 onClick={() => setIsAddYearOpen(true)}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
                 <span>Add Year Edition</span>
               </button>
             )}
           </div>
 
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 shadow-xl shadow-black/20 overflow-hidden">
+          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-xl shadow-black/20">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/60 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
-                  <tr>
-                    <th className="px-4 py-3">Year</th>
-                    <th className="px-4 py-3">Dates</th>
-                    <th className="px-4 py-3">Verification</th>
-                    <th className="px-4 py-3">Approval Status</th>
-                    <th className="px-4 py-3">Preparation Window</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="py-3 px-4">Year</th>
+                    <th className="py-3 px-4">Festival Dates</th>
+                    <th className="py-3 px-4">SEO Prep Window</th>
+                    <th className="py-3 px-4">Verification</th>
+                    <th className="py-3 px-4">Approval Status</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                  {yearDates.map((yd) => (
+                <tbody className="divide-y divide-slate-800/60">
+                  {sortedDates.map((yd) => (
                     <tr key={yd.id} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="px-4 py-3.5 font-bold text-white text-sm">{yd.year}</td>
-                      <td className="px-4 py-3.5">
-                        <span className="font-medium text-white">{yd.start_date}</span>
-                        {yd.end_date && yd.end_date !== yd.start_date && (
-                          <span className="text-slate-400"> to {yd.end_date}</span>
-                        )}
+                      <td className="py-4 px-4 font-bold text-white text-xs">{yd.year}</td>
+                      <td className="py-4 px-4 text-xs font-medium text-slate-200">
+                        {yd.start_date} - {yd.end_date}
                       </td>
-                      <td className="px-4 py-3.5">
-                        {yd.date_status === 'VERIFIED' || yd.date_status === 'CONFIRMED' ? (
+                      <td className="py-4 px-4 text-xs text-slate-400">
+                        {yd.prep_start_date ? `${yd.prep_start_date} → ${yd.prep_deadline_date || ''}` : 'Default (T-45 → T-15)'}
+                      </td>
+                      <td className="py-4 px-4">
+                        {yd.date_status === 'VERIFIED' ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                             VERIFIED
                           </span>
@@ -1386,44 +1381,28 @@ export const FestivalDetailPage: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="py-4 px-4">
                         {yd.approval_status === 'APPROVED' ? (
-                          <span className="inline-flex items-center space-x-1 text-emerald-400 font-semibold">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Approved</span>
-                          </span>
-                        ) : yd.approval_status === 'REJECTED' ? (
-                          <span className="inline-flex items-center space-x-1 text-rose-400 font-semibold">
-                            <X className="w-3.5 h-3.5" />
-                            <span>Rejected</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            APPROVED
                           </span>
                         ) : (
-                          <span className="inline-flex items-center space-x-1 text-amber-400 font-semibold animate-pulse">
-                            <Clock className="w-3.5 h-3.5" />
-                            <span>Pending Review</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                            PENDING REVIEW
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-slate-400">
-                        {yd.prep_start_date ? (
-                          <span>
-                            {yd.prep_start_date} → {yd.prep_deadline_date || 'Deadline TBD'}
-                          </span>
-                        ) : (
-                          'Not configured'
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5 text-right">
-                        {isManager && yd.approval_status === 'PENDING' && (
+                      <td className="py-4 px-4 text-right">
+                        {isManager && yd.approval_status !== 'APPROVED' && (
                           <button
                             onClick={() => {
                               setApprovingYear(yd);
                               setApprovalDecision('APPROVED');
                               setApprovalNotes('');
                             }}
-                            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition-colors"
+                            className="px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer"
                           >
-                            Review & Approve
+                            Approve
                           </button>
                         )}
                       </td>
@@ -1436,425 +1415,120 @@ export const FestivalDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* ================= MODAL: EDIT FESTIVAL (Manager Only) ================= */}
-      {isEditOpen && (
+      {/* ================= MODAL: BULK ADD LANDING PAGES ================= */}
+      {isBulkAddOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl p-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl p-6">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Edit Festival Details</h3>
-              <button onClick={() => setIsEditOpen(false)} className="text-slate-400 hover:text-white">
+              <div className="flex items-center space-x-2">
+                <span className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                  <Layers className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-white">Add Landing Pages</h3>
+                  <p className="text-xs text-slate-400">Paste multiple URLs (one per line). Subcategory is optional.</p>
+                </div>
+              </div>
+              <button onClick={() => setIsBulkAddOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleUpdateFestival} className="mt-4 space-y-4">
+            <form onSubmit={handleBulkAddSubmit} className="mt-4 space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Festival Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Region / State</label>
-                <input
-                  type="text"
-                  value={editRegion}
-                  onChange={(e) => setEditRegion(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Assigned Team Leader *</label>
-                <select
-                  value={editLeaderId}
-                  onChange={(e) => setEditLeaderId(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  {leaders.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.full_name} ({l.role})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-slate-300">
+                    Landing Page URLs (One per line) *
+                  </label>
+                  <span className="text-[11px] text-slate-400">
+                    {bulkLinesCount} URL{bulkLinesCount !== 1 ? 's' : ''} entered
+                  </span>
+                </div>
                 <textarea
-                  rows={3}
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={editSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
-                >
-                  {editSubmitting ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: ADD YEAR EDITION ================= */}
-      {isAddYearOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Add Year Edition</h3>
-              <button onClick={() => setIsAddYearOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddYearSubmit} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Year *</label>
-                <input
-                  type="number"
+                  rows={6}
                   required
-                  value={yearNum}
-                  onChange={(e) => setYearNum(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  placeholder={`https://www.craftyartapp.com/diwali-wishes/templates\nhttps://www.craftyartapp.com/diwali-images-and-poster\nhttps://www.craftyartapp.com/happy-diwali-status-video-download\nhttps://www.craftyartapp.com/dev-diwali-wishes-and-quotes`}
+                  value={bulkUrlsText}
+                  onChange={(e) => setBulkUrlsText(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Start Date *</label>
-                  <input
-                    type="date"
-                    required
-                    value={yearStartDate}
-                    onChange={(e) => {
-                      setYearStartDate(e.target.value);
-                      if (!yearEndDate) setYearEndDate(e.target.value);
-                    }}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">End Date</label>
-                  <input
-                    type="date"
-                    value={yearEndDate}
-                    onChange={(e) => setYearEndDate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Prep Start Date</label>
-                  <input
-                    type="date"
-                    value={yearPrepStart}
-                    onChange={(e) => setYearPrepStart(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Prep Deadline</label>
-                  <input
-                    type="date"
-                    value={yearPrepDeadline}
-                    onChange={(e) => setYearPrepDeadline(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Date Status</label>
-                <select
-                  value={yearDateStatus}
-                  onChange={(e) => setYearDateStatus(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="ESTIMATED">ESTIMATED</option>
-                  <option value="UNVERIFIED">UNVERIFIED</option>
-                  <option value="VERIFIED">VERIFIED</option>
-                </select>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddYearOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={yearSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
-                >
-                  {yearSubmitting ? 'Adding...' : 'Add Edition'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: APPROVE YEAR DATES ================= */}
-      {approvingYear && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Approve Edition {approvingYear.year}</h3>
-              <button onClick={() => setApprovingYear(null)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleApproveSubmit} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Decision</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setApprovalDecision('APPROVED')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border ${
-                      approvalDecision === 'APPROVED'
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}
-                  >
-                    Approve Dates
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setApprovalDecision('REJECTED')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border ${
-                      approvalDecision === 'REJECTED'
-                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/50'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}
-                  >
-                    Reject Dates
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Approval Notes</label>
-                <textarea
-                  rows={2}
-                  value={approvalNotes}
-                  onChange={(e) => setApprovalNotes(e.target.value)}
-                  placeholder="e.g. Verified with Government gazette."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setApprovingYear(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={approvalSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
-                >
-                  {approvalSubmitting ? 'Submitting...' : 'Confirm'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: ADD SUBCATEGORY ================= */}
-      {isAddSubcatOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Create Subcategory</h3>
-              <button onClick={() => setIsAddSubcatOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddSubcategory} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Subcategory Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Diwali Invitation Templates"
-                  value={subcatName}
-                  onChange={(e) => setSubcatName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Slug (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. diwali-invitation-templates"
-                  value={subcatSlug}
-                  onChange={(e) => setSubcatSlug(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Priority</label>
-                <select
-                  value={subcatPriority}
-                  onChange={(e) => setSubcatPriority(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="HIGH">HIGH Priority</option>
-                  <option value="MEDIUM">MEDIUM Priority</option>
-                  <option value="LOW">LOW Priority</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  value={subcatDesc}
-                  onChange={(e) => setSubcatDesc(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddSubcatOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={subcatSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
-                >
-                  {subcatSubmitting ? 'Creating...' : 'Create Subcategory'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: MAP LANDING PAGE ================= */}
-      {isMapPageOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Map Landing Page</h3>
-              <button onClick={() => setIsMapPageOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleMapPage} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Full Landing Page URL *</label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://craftyartapp.com/templates/diwali-invitation"
-                  value={mapFullUrl}
-                  onChange={(e) => setMapFullUrl(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Subcategory (Optional)</label>
-                <select
-                  value={mapSubcatId || ''}
-                  onChange={(e) => setMapSubcatId(e.target.value ? Number(e.target.value) : undefined)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="">None / General</option>
-                  {subcategories.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Target Country</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Subcategory (Optional)
+                  </label>
                   <select
-                    value={mapCountry}
-                    onChange={(e) => setMapCountry(e.target.value)}
+                    value={bulkSubcatId || ''}
+                    onChange={(e) => setBulkSubcatId(e.target.value ? Number(e.target.value) : undefined)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="ALL">🌐 Worldwide</option>
-                    <option value="IN">🇮🇳 India</option>
-                    <option value="US">🇺🇸 USA</option>
-                    <option value="GB">🇬🇧 UK</option>
-                    <option value="CA">🇨🇦 Canada</option>
-                    <option value="AU">🇦🇺 Australia</option>
-                    <option value="AE">🇦🇪 UAE</option>
+                    <option value="">None / General (Direct Festival Page)</option>
+                    {subcategories.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">Priority</label>
                   <select
-                    value={mapPriority}
-                    onChange={(e) => setMapPriority(e.target.value as any)}
+                    value={bulkPriority}
+                    onChange={(e) => setBulkPriority(e.target.value as any)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="HIGH">HIGH</option>
-                    <option value="MEDIUM">MEDIUM</option>
-                    <option value="LOW">LOW</option>
+                    <option value="PRIMARY">PRIMARY (Core Target Pages)</option>
+                    <option value="SECONDARY">SECONDARY (Related Designs)</option>
+                    <option value="SUPPORTING">SUPPORTING (Long-tail)</option>
                   </select>
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
+              {bulkResult && (
+                <div className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                  bulkResult.added_count > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                }`}>
+                  <div className="font-bold flex items-center space-x-1.5">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    <span>Successfully added {bulkResult.added_count} landing page{bulkResult.added_count !== 1 ? 's' : ''}.</span>
+                  </div>
+                  {bulkResult.skipped_count > 0 && (
+                    <div className="text-[11px] text-amber-300">
+                      Skipped {bulkResult.skipped_count} duplicate URL{bulkResult.skipped_count !== 1 ? 's' : ''}.
+                    </div>
+                  )}
+                  {bulkResult.errors.length > 0 && (
+                    <div className="text-[11px] text-rose-300">
+                      {bulkResult.errors.length} invalid line{bulkResult.errors.length !== 1 ? 's' : ''} skipped.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {bulkError && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{bulkError}</span>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
                 <button
                   type="button"
-                  onClick={() => setIsMapPageOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  onClick={() => setIsBulkAddOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={mapSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+                  disabled={bulkSubmitting || bulkLinesCount === 0}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors cursor-pointer"
                 >
-                  {mapSubmitting ? 'Mapping...' : 'Map URL'}
+                  {bulkSubmitting ? 'Saving...' : `Save ${bulkLinesCount > 0 ? bulkLinesCount : ''} Pages`}
                 </button>
               </div>
             </form>
@@ -1868,7 +1542,7 @@ export const FestivalDetailPage: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <h3 className="text-base font-bold text-white">Create Preparation Task</h3>
-              <button onClick={() => setIsAddTaskOpen(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setIsAddTaskOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1886,6 +1560,22 @@ export const FestivalDetailPage: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Target Landing Page (Optional)</label>
+                <select
+                  value={taskPageId || ''}
+                  onChange={(e) => setTaskPageId(e.target.value ? Number(e.target.value) : undefined)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">General Festival-Level Task</option>
+                  {pages.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.full_url}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">Task Type</label>
@@ -1894,10 +1584,11 @@ export const FestivalDetailPage: React.FC = () => {
                     onChange={(e) => setTaskType(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="CONTENT">Content & Copy</option>
-                    <option value="ON_PAGE">On-Page SEO</option>
-                    <option value="TECHNICAL">Technical SEO</option>
-                    <option value="LINK_BUILDING">Internal Linking</option>
+                    <option value="CONTENT">Content & On-page</option>
+                    <option value="META_TAGS">Meta Tags & Schema</option>
+                    <option value="INTERNAL_LINKS">Internal Linking</option>
+                    <option value="CREATIVES">Banners & Creatives</option>
+                    <option value="TECHNICAL">Technical Audit</option>
                   </select>
                 </div>
 
@@ -1908,87 +1599,285 @@ export const FestivalDetailPage: React.FC = () => {
                     onChange={(e) => setTaskMilestone(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="T_MINUS_60">T-60 Days</option>
-                    <option value="T_MINUS_30">T-30 Days</option>
-                    <option value="T_MINUS_15">T-15 Days</option>
-                    <option value="T_MINUS_7">T-7 Days</option>
-                    <option value="FESTIVAL_WEEK">Festival Week</option>
-                    <option value="POST_FESTIVAL">Post Festival</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Due Date</label>
-                  <input
-                    type="date"
-                    value={taskDueDate}
-                    onChange={(e) => setTaskDueDate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">Assignee</label>
-                  <select
-                    value={taskAssigneeId}
-                    onChange={(e) => setTaskAssigneeId(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  >
-                    {isManager ? (
-                      leaders.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.full_name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value={user?.id}>{user?.full_name}</option>
-                    )}
+                    <option value="T_MINUS_60">T-60 Days (Strategy)</option>
+                    <option value="T_MINUS_30">T-30 Days (Execution)</option>
+                    <option value="T_MINUS_15">T-15 Days (Indexing)</option>
+                    <option value="T_MINUS_7">T-7 Days (Final Push)</option>
+                    <option value="EVENT_DAY">Event Day</option>
+                    <option value="POST_FESTIVAL">Post Festival Review</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Related Landing Page (Optional)</label>
-                <select
-                  value={taskPageId || ''}
-                  onChange={(e) => setTaskPageId(e.target.value ? Number(e.target.value) : undefined)}
+                <label className="block text-xs font-medium text-slate-300 mb-1">Due Date</label>
+                <input
+                  type="date"
+                  value={taskDueDate}
+                  onChange={(e) => setTaskDueDate(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="">None / General Task</option>
-                  {pages.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.full_url}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
                 <textarea
                   rows={2}
+                  placeholder="Task instructions, keywords, or checklists..."
                   value={taskDesc}
                   onChange={(e) => setTaskDesc(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
+              <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
                 <button
                   type="button"
                   onClick={() => setIsAddTaskOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={taskSubmitting}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors cursor-pointer"
                 >
                   {taskSubmitting ? 'Creating...' : 'Create Task'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADD SUBCATEGORY ================= */}
+      {isAddSubcatOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Create Subcategory</h3>
+              <button onClick={() => setIsAddSubcatOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddSubcat} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Subcategory Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Diwali Greeting Cards"
+                  value={subcatName}
+                  onChange={(e) => {
+                    setSubcatName(e.target.value);
+                    if (!subcatSlug) {
+                      setSubcatSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Slug</label>
+                <input
+                  type="text"
+                  placeholder="e.g. diwali-greeting-cards"
+                  value={subcatSlug}
+                  onChange={(e) => setSubcatSlug(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
+                <textarea
+                  rows={2}
+                  placeholder="SEO themes, key templates..."
+                  value={subcatDesc}
+                  onChange={(e) => setSubcatDesc(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddSubcatOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={subcatSubmitting}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {subcatSubmitting ? 'Creating...' : 'Create Subcategory'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADD YEAR EDITION ================= */}
+      {isAddYearOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Add Year Calendar Edition</h3>
+              <button onClick={() => setIsAddYearOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddYearDate} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Calendar Year *</label>
+                <input
+                  type="number"
+                  required
+                  min={2020}
+                  max={2035}
+                  value={yearNum}
+                  onChange={(e) => setYearNum(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Start Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={yearStartDate}
+                    onChange={(e) => setYearStartDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={yearEndDate}
+                    onChange={(e) => setYearEndDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Verification Status</label>
+                <select
+                  value={yearDateStatus}
+                  onChange={(e) => setYearDateStatus(e.target.value as any)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="ESTIMATED">ESTIMATED (Approximation)</option>
+                  <option value="UNVERIFIED">UNVERIFIED (Requires calendar confirmation)</option>
+                  <option value="VERIFIED">VERIFIED (Official gazette)</option>
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddYearOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={yearSubmitting}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {yearSubmitting ? 'Saving...' : 'Add Edition'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: EDIT FESTIVAL ================= */}
+      {isEditOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Edit Festival Details</h3>
+              <button onClick={() => setIsEditOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateFestival} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Festival Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Region</label>
+                <input
+                  type="text"
+                  value={editRegion}
+                  onChange={(e) => setEditRegion(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {isManager && leaders.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Assigned Team Leader</label>
+                  <select
+                    value={editLeaderId}
+                    onChange={(e) => setEditLeaderId(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    {leaders.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.full_name} ({l.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSubmitting}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {editSubmitting ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -1998,4 +1887,3 @@ export const FestivalDetailPage: React.FC = () => {
     </div>
   );
 };
-export default FestivalDetailPage;

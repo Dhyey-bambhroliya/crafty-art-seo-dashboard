@@ -13,7 +13,8 @@ from backend.app.models.festival_models import (
 )
 from backend.app.schemas.festival_schemas import (
     FestivalCreate, FestivalUpdate, FestivalYearDateCreate, FestivalYearDateUpdate,
-    FestivalPageCreate, FestivalSubcategoryCreate, FestivalTaskCreate, FestivalTaskUpdate
+    FestivalPageCreate, FestivalSubcategoryCreate, FestivalTaskCreate, FestivalTaskUpdate,
+    FestivalBulkPagesRequest, FestivalBulkPagesResponse, FestivalPageOut
 )
 from backend.app.services.festival_calendar_provider import (
     calendar_provider, SuggestedFestivalItem
@@ -605,6 +606,129 @@ def map_festival_landing_page(
     db.refresh(page)
     return page
 
+def bulk_map_festival_landing_pages(
+    db: Session,
+    festival_id: int,
+    request: FestivalBulkPagesRequest,
+    current_user: User
+) -> FestivalBulkPagesResponse:
+    """
+    Bulk map landing pages directly to a festival (with optional subcategory).
+    - Normalizes and validates URLs.
+    - Prevents duplicates within the festival and across the batch.
+    - Auto-links to existing category_pages when available.
+    - Returns detailed result with added pages, warnings, and errors.
+    """
+    from backend.app.services.metric_service import normalize_url
+    from backend.app.models.models import CategoryPage
+
+    festival = get_festival_by_id(db, festival_id, current_user)
+    check_festival_edit_permission(festival, current_user)
+
+    subcat_name = None
+    if request.subcategory_id:
+        sc = db.query(FestivalSubcategory).filter(
+            FestivalSubcategory.id == request.subcategory_id,
+            FestivalSubcategory.festival_id == festival_id
+        ).first()
+        if not sc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Specified subcategory does not belong to this festival."
+            )
+        subcat_name = sc.name
+
+    existing_in_fest = {
+        p.normalized_url for p in db.query(FestivalPage.normalized_url).filter(FestivalPage.festival_id == festival_id).all()
+    }
+
+    cat_page_map = {
+        p.normalized_url: p.id for p in db.query(CategoryPage.normalized_url, CategoryPage.id).all()
+    }
+
+    added_models = []
+    seen_in_batch = set()
+    skipped_count = 0
+    warnings = []
+    errors = []
+
+    for raw in request.urls:
+        raw_clean = raw.strip()
+        if not raw_clean:
+            continue
+
+        norm_url = normalize_url(raw_clean)
+        if not norm_url:
+            errors.append(f"Invalid URL skipped: '{raw_clean}'")
+            continue
+
+        if norm_url in seen_in_batch:
+            warnings.append(f"Duplicate URL in submission skipped: '{raw_clean}'")
+            skipped_count += 1
+            continue
+
+        if norm_url in existing_in_fest:
+            warnings.append(f"URL already mapped to festival '{festival.name}': '{raw_clean}'")
+            skipped_count += 1
+            continue
+
+        seen_in_batch.add(norm_url)
+        existing_in_fest.add(norm_url)
+
+        new_page = FestivalPage(
+            festival_id=festival.id,
+            subcategory_id=request.subcategory_id,
+            category_page_id=cat_page_map.get(norm_url),
+            full_url=raw_clean,
+            normalized_url=norm_url,
+            priority=request.priority or "PRIMARY",
+            status="ACTIVE"
+        )
+        db.add(new_page)
+        added_models.append(new_page)
+
+    if added_models:
+        db.commit()
+        for p in added_models:
+            db.refresh(p)
+
+    leader_name = festival.assigned_leader.full_name if festival.assigned_leader else "Unassigned"
+
+    out_pages = [
+        FestivalPageOut(
+            id=p.id,
+            festival_id=p.festival_id,
+            full_url=p.full_url,
+            normalized_url=p.normalized_url,
+            subcategory_id=p.subcategory_id,
+            subcategory_name=subcat_name,
+            category_page_id=p.category_page_id,
+            page_title=p.page_title,
+            priority=p.priority,
+            status=p.status,
+            notes=p.notes,
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+            task_count=0,
+            completed_task_count=0,
+            seo_status="NOT_STARTED",
+            assigned_leader_name=leader_name
+        )
+        for p in added_models
+    ]
+
+    return FestivalBulkPagesResponse(
+        status="SUCCESS" if added_models or not errors else "PARTIAL",
+        total_submitted=len(request.urls),
+        added_count=len(added_models),
+        skipped_count=skipped_count,
+        duplicate_count=skipped_count,
+        invalid_count=len(errors),
+        added_pages=out_pages,
+        warnings=warnings,
+        errors=errors
+    )
+
 def list_festival_landing_pages(
     db: Session,
     festival_id: int,
@@ -612,7 +736,7 @@ def list_festival_landing_pages(
 ) -> List[FestivalPage]:
     """List all mapped landing pages for a festival."""
     festival = get_festival_by_id(db, festival_id, current_user)
-    return db.query(FestivalPage).filter(FestivalPage.festival_id == festival_id).all()
+    return db.query(FestivalPage).filter(FestivalPage.festival_id == festival_id).order_by(FestivalPage.created_at.desc()).all()
 
 def delete_festival_landing_page(
     db: Session,
@@ -675,7 +799,7 @@ def create_festival_task(
         description=task_in.description,
         task_type=task_in.task_type or "CONTENT",
         milestone_stage=task_in.milestone_stage or "T_MINUS_30",
-        status=FestivalTaskStatus.NOT_STARTED,
+        status=task_in.status or FestivalTaskStatus.NOT_STARTED,
         due_date=task_in.due_date
     )
     db.add(task)
