@@ -69,6 +69,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.responses import PlainTextResponse
+
 # Health check endpoints for Render and uptime pingers
 @app.get("/api/health", tags=["Health"])
 @app.get("/health", tags=["Health"])
@@ -78,6 +80,11 @@ def health_check():
         "app": settings.PROJECT_NAME,
         "version": "1.0.0"
     }
+
+# Google Search Console Verification Endpoint
+@app.get("/google9c3aff656ff3c70c.html", response_class=PlainTextResponse, include_in_schema=False)
+def google_search_console_verification():
+    return "google-site-verification: google9c3aff656ff3c70c.html" 
 
 # Register API Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
